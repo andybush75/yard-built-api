@@ -10,9 +10,9 @@ app.use(express.json());
 
 app.get("/health", (req, res) => res.json({ ok: true, service: "yard-built-api", time: new Date().toISOString() }));
 
-// Serve the prototype UI (public/index.html) at the site root, so the app itself
+// Serve the prototype UI (src/public/index.html) at the site root, so the app itself
 // lives at the same URL as the API instead of needing a separate host.
-app.use(express.static(path.join(__dirname, "..", "public")));
+app.use(express.static(path.join(__dirname, "public")));
 
 app.use("/auth", require("./routes/auth"));
 app.use("/commodities", require("./routes/commodities"));
