@@ -1,5 +1,6 @@
 require("dotenv").config();
 require("express-async-errors"); // lets the async route handlers below throw straight into the error middleware
+const path = require("path");
 const express = require("express");
 const cors = require("cors");
 
@@ -8,6 +9,10 @@ app.use(cors());
 app.use(express.json());
 
 app.get("/health", (req, res) => res.json({ ok: true, service: "yard-built-api", time: new Date().toISOString() }));
+
+// Serve the prototype UI (public/index.html) at the site root, so the app itself
+// lives at the same URL as the API instead of needing a separate host.
+app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.use("/auth", require("./routes/auth"));
 app.use("/commodities", require("./routes/commodities"));
