@@ -1,3 +1,8 @@
+-- Migration 001: the original db/schema.sql, frozen as the first migration (2026-10-06).
+-- FROZEN — do not edit. Later schema changes go in new numbered files (npm run migrate:new).
+-- Safe against the existing production database: every statement is IF NOT EXISTS or a no-op
+-- UPDATE, so the first run of the new migration runner just records this file as applied.
+--
 -- Yard-Built — Phase 0 "Real backend + database"
 -- Core transactional schema mirrored from langer_yard_prototype.html's in-memory state.
 -- Not yet covered here (left for follow-on roadmap items — same pattern extends to each):

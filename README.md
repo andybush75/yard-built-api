@@ -25,7 +25,7 @@ all landed with zero lost updates.
 ```bash
 npm install
 cp .env.example .env   # then edit DATABASE_URL to point at your local Postgres
-npm run migrate        # applies db/schema.sql (idempotent — safe to re-run)
+npm run migrate        # applies any migrations/*.sql not yet applied to this database (safe to re-run)
 npm run seed           # demo data: 4 yards, roles/users, commodities, vendors (incl. the
                         # Dale Hendricks/Dale Hendrix duplicate-vendor pair), customers, a
                         # contract, a PO, and a few posted demo tickets
@@ -76,9 +76,30 @@ individual grant) includes it; everything else is open to any logged-in user.
 - `GET /inventory/balances`, `/inventory/ledger`, `/inventory/negative`
 - `GET/POST /remittances` (+ `POST /remittances/:id/void`) — both POSTs need `payRemittances`
 
-New permission keys must be added in three places: the role seeds in `db/seed.js`, the backfill
-block at the bottom of `db/schema.sql` (so existing production roles pick them up on deploy), and
-the `PERMISSIONS` list in `src/public/index.html` so the role editor can show them.
+New permission keys must be added in three places: the role seeds in `db/seed.js`, a new
+migration that grants them to the existing production roles (see `001_initial_schema.sql`'s last
+block for the pattern), and the `PERMISSIONS` list in `src/public/index.html` so the role editor
+can show them.
+
+## Changing the database
+
+The schema lives in `migrations/`, one numbered SQL file per change. `npm run migrate` applies
+whichever files a database hasn't seen yet, in order, and records each in a `schema_migrations`
+table. It runs automatically on every Railway deploy before the app starts.
+
+To change the database:
+
+1. `npm run migrate:new add_ticket_status` → creates `migrations/002_add_ticket_status.sql`.
+2. Write the SQL in that file (`ALTER TABLE tickets ADD COLUMN ...`).
+3. Commit it with the code that uses it. On deploy it is applied once, and the deploy fails loudly
+   if it errors — the app never starts against a half-changed database.
+
+Never edit a migration file that has already been applied anywhere (production especially). The
+runner stores a checksum and refuses to start if one changes. Write a new file instead.
+
+`001_initial_schema.sql` is the former `db/schema.sql`, frozen. It is written with
+`IF NOT EXISTS` everywhere, so applying it to the existing production database (whose tables were
+created by the old runner) changes nothing except recording it as applied.
 
 ## Next steps on the roadmap this unblocks
 

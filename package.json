@@ -8,8 +8,10 @@
     "dev": "node src/server.js",
     "start": "node src/server.js",
     "migrate": "node db/migrate.js",
+    "migrate:new": "node db/new-migration.js",
     "seed": "node db/seed.js",
-    "test": "node test/smoke-test.js"
+    "test": "node test/migrate-runner-test.js && node test/smoke-test.js",
+    "test:unit": "node test/migrate-runner-test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
