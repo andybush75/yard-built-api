@@ -1,7 +1,12 @@
 const jwt = require("jsonwebtoken");
 const { query } = require("../db");
 
-const JWT_SECRET = process.env.JWT_SECRET || "dev-only-secret";
+// No fallback on purpose: a secret written into the code would let anyone who has read this repo
+// forge a login token for production. Set JWT_SECRET in .env locally and in Railway's Variables tab.
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET is not set. Refusing to start — see .env.example.");
+}
 
 function signToken(user) {
   return jwt.sign({ sub: user.id }, JWT_SECRET, { expiresIn: "12h" });

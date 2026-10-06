@@ -1,6 +1,6 @@
 const express = require("express");
 const { query } = require("../db");
-const { requireAuth } = require("../middleware/auth");
+const { requireAuth, requirePermission } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -9,7 +9,8 @@ router.get("/", requireAuth, async (req, res) => {
   res.json(rows);
 });
 
-router.patch("/:yard", requireAuth, async (req, res) => {
+// The starting balance is the yard's cash figure — admin only (editBankAccounts).
+router.patch("/:yard", requireAuth, requirePermission("editBankAccounts"), async (req, res) => {
   const { startingBalance } = req.body || {};
   if (startingBalance === undefined) return res.status(400).json({ error: "startingBalance is required" });
   const { rows } = await query(

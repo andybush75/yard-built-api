@@ -20,9 +20,9 @@ const BANK_ACCOUNTS = [
 ];
 
 const ROLES = [
-  { name: "Admin", system: true, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","adjustInventory","regradeInventory","packInventory","addCommodity"] },
-  { name: "Yard Manager", system: false, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","regradeInventory","packInventory"] },
-  { name: "Cashier", system: false, permissions: ["voidTickets"] },
+  { name: "Admin", system: true, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","adjustInventory","regradeInventory","packInventory","addCommodity","payRemittances","editBankAccounts"] },
+  { name: "Yard Manager", system: false, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","regradeInventory","packInventory","payRemittances"] },
+  { name: "Cashier", system: false, permissions: ["voidTickets","payRemittances"] },
   { name: "Scale Operator", system: false, permissions: ["packInventory"] },
   { name: "Mechanic", system: false, permissions: [] },
 ];
@@ -70,6 +70,14 @@ async function main() {
     `INSERT INTO users (name, email, password_hash, role_id) VALUES ($1,$2,$3,$4)
      ON CONFLICT (email) DO NOTHING`,
     ["Andy Bush", "andy.bush@langerindustrial.com", andyHash, roleIds["Admin"]]
+  );
+
+  // Demo-only scale operator so the smoke test can prove that permission checks actually deny
+  // someone. Fictional, like the vendors below — never seed this into production.
+  await query(
+    `INSERT INTO users (name, email, password_hash, role_id) VALUES ($1,$2,$3,$4)
+     ON CONFLICT (email) DO NOTHING`,
+    ["Demo Scale Operator", "scale.demo@example.com", andyHash, roleIds["Scale Operator"]]
   );
 
   for (const c of COMMODITIES) {
