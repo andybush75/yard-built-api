@@ -264,3 +264,11 @@ CREATE TABLE IF NOT EXISTS audit_log (
   details    JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Permission backfill for roles that already exist in production. seed.js does not run on deploy,
+-- so when a route starts requiring a new permission key, the built-in roles that should have it
+-- are granted it here. Each statement is a no-op once the key is present, so re-running is safe.
+UPDATE roles SET permissions = permissions || '{payRemittances}'
+  WHERE name IN ('Admin', 'Yard Manager', 'Cashier') AND NOT (permissions @> '{payRemittances}');
+UPDATE roles SET permissions = permissions || '{editBankAccounts}'
+  WHERE name = 'Admin' AND NOT (permissions @> '{editBankAccounts}');

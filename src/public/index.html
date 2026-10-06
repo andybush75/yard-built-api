@@ -1082,13 +1082,15 @@ const PERMISSIONS = [
   { key:"regradeInventory", label:"Regrade / move inventory between commodities", desc:"Convert on-hand material from one commodity into another for processing (e.g. raw HMS into prepared #2 HMS) on the Inventory Moves tab." },
   { key:"packInventory", label:"Pack & unpack inventory", desc:"Move on-hand material into a labeled pack, or dissolve a pack back into on-hand inventory. Doesn't allow writing quantity up or down — packing/unpacking only moves what's already on the books." },
   { key:"addCommodity", label:"Add new commodities", desc:"Create a brand-new commodity code on the master list, on its own \"Add a Commodity\" tab. Separate from editing pricing on a commodity that already exists." },
+  { key:"payRemittances", label:"Pay & void remittances", desc:"Cut a check or ACH remittance against held/closed tickets, and void one (reprints go through void). Enforced by the server." },
+  { key:"editBankAccounts", label:"Edit bank accounts", desc:"Change a yard's bank account starting balance. Enforced by the server." },
 ];
 function findPermission(key) { return PERMISSIONS.find(p => p.key === key); }
 
 let roles = [
-  { id:"role-admin", name:"Admin", system:true, permissions:["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","adjustInventory","regradeInventory","packInventory","addCommodity"] },
-  { id:"role-manager", name:"Yard Manager", system:false, permissions:["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","regradeInventory","packInventory"] },
-  { id:"role-cashier", name:"Cashier", system:false, permissions:["voidTickets"] },
+  { id:"role-admin", name:"Admin", system:true, permissions:["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","adjustInventory","regradeInventory","packInventory","addCommodity","payRemittances","editBankAccounts"] },
+  { id:"role-manager", name:"Yard Manager", system:false, permissions:["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","regradeInventory","packInventory","payRemittances"] },
+  { id:"role-cashier", name:"Cashier", system:false, permissions:["voidTickets","payRemittances"] },
   { id:"role-scale", name:"Scale Operator", system:false, permissions:["packInventory"] },
   { id:"role-mechanic", name:"Mechanic", system:false, permissions:[] },
 ];

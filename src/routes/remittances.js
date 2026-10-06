@@ -1,6 +1,6 @@
 const express = require("express");
 const { pool, query } = require("../db");
-const { requireAuth } = require("../middleware/auth");
+const { requireAuth, requirePermission } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -16,7 +16,8 @@ router.get("/", requireAuth, async (req, res) => {
 // Combines one or more open ticket lines for a single payee into one check/ACH, same as "print a
 // remittance that pays multiple closed-but-unpaid tickets at once" — marks each ticket paid in the
 // same transaction so a line can never be double-paid by a second concurrent remittance run.
-router.post("/", requireAuth, async (req, res) => {
+// Cutting a check is the cashier/AP job (payRemittances), not something a scale operator can do.
+router.post("/", requireAuth, requirePermission("payRemittances"), async (req, res) => {
   const { payee, method, checkNumber, account, date, ticketIds } = req.body || {};
   if (!payee || !method || !account || !date || !Array.isArray(ticketIds) || !ticketIds.length) {
     return res.status(400).json({ error: "payee, method, account, date, and a non-empty ticketIds array are required" });
@@ -61,12 +62,17 @@ router.post("/", requireAuth, async (req, res) => {
   }
 });
 
-router.post("/:id/void", requireAuth, async (req, res) => {
+// Reprints go through void, so this needs the same permission as cutting the check in the first
+// place. A remittance can only be voided once — a second void would otherwise re-open tickets that
+// may already have been paid again on a replacement remittance.
+router.post("/:id/void", requireAuth, requirePermission("payRemittances"), async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const { rows: existing } = await client.query("SELECT voided FROM remittances WHERE id = $1 FOR UPDATE", [req.params.id]);
+    if (!existing.length) { await client.query("ROLLBACK"); return res.status(404).json({ error: "Not found" }); }
+    if (existing[0].voided) { await client.query("ROLLBACK"); return res.status(409).json({ error: "Remittance is already voided" }); }
     const { rows } = await client.query("UPDATE remittances SET voided = true WHERE id = $1 RETURNING *", [req.params.id]);
-    if (!rows.length) { await client.query("ROLLBACK"); return res.status(404).json({ error: "Not found" }); }
     await client.query(
       "UPDATE tickets SET paid = false, remittance_id = NULL WHERE remittance_id = $1",
       [req.params.id]

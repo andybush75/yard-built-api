@@ -63,17 +63,22 @@ do, matching how Langer Boxes is already set up:
 ## API shape
 
 All routes except `/health` and `/auth/login` require `Authorization: Bearer <token>` from
-`POST /auth/login`.
+`POST /auth/login`. Routes marked with a permission key return 403 unless the user's role (or an
+individual grant) includes it; everything else is open to any logged-in user.
 
 - `POST /auth/login`, `GET /auth/me`
-- `GET/POST/PATCH /commodities`
+- `GET/POST/PATCH /commodities` — POST needs `addCommodity`, PATCH needs `editPricing`
 - `GET/POST/PATCH /vendors`, `/customers`
 - `GET/POST /carriers`
 - `GET/POST /contracts` (+ `PATCH /contracts/:id/rename`), `/purchase-orders`
-- `GET/PATCH /bank-accounts`
+- `GET/PATCH /bank-accounts` — PATCH needs `editBankAccounts`
 - `GET/POST /tickets` — the core transactional endpoint described above
 - `GET /inventory/balances`, `/inventory/ledger`, `/inventory/negative`
-- `GET/POST /remittances` (+ `POST /remittances/:id/void`)
+- `GET/POST /remittances` (+ `POST /remittances/:id/void`) — both POSTs need `payRemittances`
+
+New permission keys must be added in three places: the role seeds in `db/seed.js`, the backfill
+block at the bottom of `db/schema.sql` (so existing production roles pick them up on deploy), and
+the `PERMISSIONS` list in `src/public/index.html` so the role editor can show them.
 
 ## Next steps on the roadmap this unblocks
 

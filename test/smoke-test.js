@@ -91,6 +91,33 @@ async function main() {
   });
   assert(doublePay.status === 409, "a second remittance on an already-paid ticket is rejected");
 
+  const voided = await req("POST", `/remittances/${remit.body.id}/void`, { token });
+  assert(voided.status === 200 && voided.body.voided === true, "remittance can be voided");
+  const ticketAfterVoid = await req("GET", `/tickets/${buy.body.id}`, { token });
+  assert(ticketAfterVoid.body.paid === false && ticketAfterVoid.body.remittance_id === null, "voiding re-opens the ticket for payment");
+  const doubleVoid = await req("POST", `/remittances/${remit.body.id}/void`, { token });
+  assert(doubleVoid.status === 409, "voiding the same remittance twice is rejected");
+
+  // Permission enforcement: a scale operator can post tickets but cannot cut checks or touch bank
+  // accounts. Uses the demo-only operator seeded by db/seed.js.
+  const opLogin = await req("POST", "/auth/login", { body: { email: "scale.demo@example.com", password: "changeme123" } });
+  assert(opLogin.status === 200 && opLogin.body.user.role === "Scale Operator", "demo scale operator can log in");
+  const opToken = opLogin.body.token;
+  const opRemit = await req("POST", "/remittances", {
+    token: opToken,
+    body: { payee: "Smoke Test Walk-in", method: "Check", account: "COLBY", date: "2026-10-02", ticketIds: [buy.body.id] },
+  });
+  assert(opRemit.status === 403, "scale operator is denied creating a remittance (403)");
+  const opVoid = await req("POST", `/remittances/${remit.body.id}/void`, { token: opToken });
+  assert(opVoid.status === 403, "scale operator is denied voiding a remittance (403)");
+  const opBank = await req("PATCH", "/bank-accounts/COLBY", { token: opToken, body: { startingBalance: 1 } });
+  assert(opBank.status === 403, "scale operator is denied editing a bank account (403)");
+  const opTicket = await req("POST", "/tickets", {
+    token: opToken,
+    body: { type: "buy", date: "2026-10-02", yard: "COLBY", partyName: "Operator smoke walk-in", commodity: "HMS2", netWeight: 10, price: 0.09, payment: "Check" },
+  });
+  assert(opTicket.status === 201, "scale operator can still post a ticket");
+
   console.log("\nALL SMOKE TESTS PASSED");
 }
 
