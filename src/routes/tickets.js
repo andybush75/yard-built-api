@@ -95,7 +95,7 @@ function nowTimeLabel() {
 router.post("/", requireAuth, async (req, res) => {
   const {
     id, type, date, yard, vendorId, customerId, partyName, holdDesc,
-    commodity, tier, netWeight, price, payment, contractId, poId, shipmentId,
+    commodity, tier, netWeight, price, payment, contractId, poId, shipmentId, trailerId,
   } = req.body || {};
 
   if (!type || !["buy", "sell"].includes(type)) return res.status(400).json({ error: "type must be 'buy' or 'sell'" });
@@ -123,6 +123,11 @@ router.post("/", requireAuth, async (req, res) => {
       const { rows } = await client.query("SELECT name FROM customers WHERE id = $1", [customerId]);
       if (!rows.length) { await client.query("ROLLBACK"); return res.status(400).json({ error: "customerId does not match any customer" }); }
       snapshotName = snapshotName || rows[0].name;
+    }
+
+    if (trailerId) {
+      const { rows } = await client.query("SELECT id FROM trailers WHERE id = $1", [trailerId]);
+      if (!rows.length) { await client.query("ROLLBACK"); return res.status(400).json({ error: "trailerId does not match any trailer" }); }
     }
 
     let ticketId = id;
@@ -174,8 +179,8 @@ router.post("/", requireAuth, async (req, res) => {
     const { rows: ticketRows } = await client.query(
       `INSERT INTO tickets (id, type, date, yard, vendor_id, customer_id, party_name, hold_desc, commodity, tier,
                              net_weight, price, total, payment, status, cogs_per_lb, contract_id, po_id, shipment_id,
-                             created_by, closed_at, closed_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+                             created_by, closed_at, closed_by, trailer_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
        RETURNING *`,
       [
         ticketId, type, date, yard, vendorId || null, customerId || null,
@@ -183,6 +188,7 @@ router.post("/", requireAuth, async (req, res) => {
         netWeightNum, priceNum, total, payment, status,
         cogsPerLb, contractId || null, poId || null, shipmentId || null,
         req.user.id, status === "Closed" ? new Date() : null, status === "Closed" ? req.user.id : null,
+        trailerId || null,
       ]
     );
 
@@ -217,6 +223,20 @@ router.post("/", requireAuth, async (req, res) => {
   } finally {
     client.release();
   }
+});
+
+// Set or change which trailer hauled this load (the one field that's often learned after the
+// ticket is written). Any logged-in user; it never touches money.
+router.patch("/:id/trailer", requireAuth, async (req, res) => {
+  const { trailerId } = req.body || {};
+  if (trailerId) {
+    const { rows } = await query("SELECT id FROM trailers WHERE id = $1", [trailerId]);
+    if (!rows.length) return res.status(400).json({ error: "trailerId does not match any trailer" });
+  }
+  const { rows } = await query("UPDATE tickets SET trailer_id = $2 WHERE id = $1 RETURNING *", [req.params.id, trailerId || null]);
+  if (!rows.length) return res.status(404).json({ error: "Not found" });
+  await logAudit(pool, { userId: req.user.id, action: "ticket.trailer", entity: "ticket", entityId: req.params.id, details: { trailerId: trailerId || null } });
+  res.json(rows[0]);
 });
 
 // Cashier: "Pay Later" — close the held ticket and send it to AP unpaid, to be covered by a

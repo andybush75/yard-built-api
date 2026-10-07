@@ -236,6 +236,43 @@ async function main() {
   assert(pageWithFreight.body.freight && pageWithFreight.body.freight.id === reattach.body.freight.id, "ticket page carries its live freight ticket");
   assert(pageWithFreight.body.timeline.some((e) => e.action === "ticket.freight_attach") && pageWithFreight.body.timeline.some((e) => e.action === "ticket.freight_void"), "freight events show on the ticket timeline");
 
+  // ---- Trailers ----
+  const settings = await req("GET", "/settings", { token });
+  assert(settings.status === 200 && settings.body.trailer_loads_goal_per_week === 5 && settings.body.trailer_tons_target_by_type["End dump"] === 60, "trailer targets come from app settings");
+  const tnum = String(900 + (stamp % 90));
+  const trailer = await req("POST", "/trailers", { token, body: { number: tnum, yard: "COLBY", type: "End dump", carrierId: redline.id } });
+  assert(trailer.status === 201 && trailer.body.carrier_name === "Redline Trucking", "a trailer can be created with its current carrier");
+  const badType = await req("POST", "/trailers", { token, body: { number: tnum + "x", yard: "COLBY", type: "Hovercraft" } });
+  assert(badType.status === 400, "an unknown trailer type is rejected");
+  const dupeTrailer = await req("POST", "/trailers", { token, body: { number: tnum, yard: "COLBY" } });
+  assert(dupeTrailer.status === 409, "duplicate trailer number is rejected");
+  const sellOnTrailer = await req("POST", "/tickets", { token, body: { type: "sell", date: "2026-10-02", yard: "COLBY", partyName: "Interstate Recycling Co.", commodity: "HMS2", netWeight: 40000, price: 0.12, payment: "ACH", shipmentId: null, trailerId: trailer.body.id } });
+  assert(sellOnTrailer.status === 201 && sellOnTrailer.body.trailer_id === trailer.body.id, "a sell ticket records the trailer that hauled it");
+  const badTrailer = await req("POST", "/tickets", { token, body: { type: "sell", date: "2026-10-02", yard: "COLBY", partyName: "x", commodity: "HMS2", netWeight: 10, price: 0.12, payment: "ACH", trailerId: "nope" } });
+  assert(badTrailer.status === 400, "an unknown trailerId on a ticket is rejected");
+  const buyOnTrailer = await req("POST", "/tickets", { token, body: { type: "buy", date: "2026-10-02", yard: "COLBY", vendorId: hendricks.id, commodity: "HMS2", netWeight: 10000, price: 0.09, payment: "Check" } });
+  const setTrailer = await req("PATCH", `/tickets/${buyOnTrailer.body.id}/trailer`, { token, body: { trailerId: trailer.body.id } });
+  assert(setTrailer.status === 200 && setTrailer.body.trailer_id === trailer.body.id, "the trailer can be set on a ticket after the fact");
+  // 2026-10-02 is a Friday; its Sun–Sat week starts 2026-09-27. Ask for utilization as of that Friday.
+  const util = await req("GET", "/trailers/utilization?weeks=4&asOf=2026-10-02", { token });
+  assert(util.status === 200 && util.body.weeks.length === 4 && util.body.weeks[3].start === "2026-09-27", "utilization returns Sun–Sat weeks ending with the current week");
+  const u = util.body.trailers.find((t) => t.id === trailer.body.id);
+  assert(u && u.outLoads[3] === 1 && Math.abs(u.outTons[3] - 20) < 0.01, `outbound: 1 load, 20.0 tons this week (${JSON.stringify(u && u.outTons)})`);
+  assert(u.inLoads[3] === 1 && Math.abs(u.inTons[3] - 5) < 0.01, "inbound: 1 load, 5.0 tons this week");
+  assert(u.target === 60 && u.daysSinceOut === 0, "End dump target is 60 and days-since-out is 0 on the day of the load");
+  const hist = await req("POST", "/trailers/import-history", { token, body: { rows: [
+    { number: tnum, yard: "COLBY", type: "End dump", weekStart: "2026-09-20", outLoads: 3, outTons: 61.5, inLoads: 0, inTons: 0 },
+    { number: tnum + "-new", yard: "HAYS", type: "Gondola", carrierName: "Smoke Carrier " + stamp, weekStart: "2026-09-20", outLoads: 1, outTons: 20, inLoads: 0, inTons: 0 },
+  ] } });
+  assert(hist.status === 200 && hist.body.trailersCreated === 1 && hist.body.weeksWritten === 2, "history import writes weeks and creates unknown trailers (and their carrier)");
+  const util2 = await req("GET", "/trailers/utilization?weeks=4&asOf=2026-10-02", { token });
+  const u2 = util2.body.trailers.find((t) => t.id === trailer.body.id);
+  assert(Math.abs(u2.outTons[2] - 61.5) < 0.01 && u2.outLoads[2] === 3, "imported history fills weeks that have no tickets");
+  const opHist = await req("POST", "/trailers/import-history", { token: opToken, body: { rows: [] } });
+  assert(opHist.status === 403, "scale operator can't import history");
+  const deactTrailer = await req("PATCH", `/trailers/${trailer.body.id}`, { token, body: { active: false, carrierId: "" } });
+  assert(deactTrailer.status === 200 && deactTrailer.body.active === false && deactTrailer.body.carrier_id === null, "a trailer can be deactivated and its carrier cleared");
+
   // Permission enforcement: a scale operator can post tickets but cannot cut checks or touch bank
   // accounts. Uses the demo-only operator seeded by db/seed.js.
   const opLogin = await req("POST", "/auth/login", { body: { email: "scale.demo@example.com", password: "changeme123" } });
