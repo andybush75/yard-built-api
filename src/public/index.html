@@ -2736,7 +2736,7 @@ async function completeKioskTicket() {
     }
     await refreshInventoryFor(currentYard, [...new Set(lines.map(l => l.code))]);
     attachFreightFromKioskForm(newIds);
-    printScaleTickets(newIds);
+    // The scale ticket prints once, at the cashier (Pay / Pay Later) — not here (Andy, 2026-10-07).
     selectedPartyByPrefix['kiosk'] = "";
     holdDescByPrefix['kiosk'] = "";
   } catch (err) {
@@ -3056,7 +3056,7 @@ function viewCashierChecks() {
       <div class="footnote" style="margin-bottom:10px;">Every check drawn on ${yardName(currentYard)}'s account, oldest to newest. Only checks paid FROM this account show here — a remittance can still combine payable lines from other yards, but the check itself is drawn from whichever account was picked when it was created. ACH payments aren't checks, so they don't appear here. A printed check can't be reprinted — pull a VOID copy for your file, or void the payment and run a fresh one if something went wrong.</div>
       <div class="kpi-row" style="grid-template-columns: repeat(5,1fr); margin-bottom:14px;">
         <div class="tile"><div class="label">Opening balance ${can("editBankAccounts") ? `<span class="link" style="font-weight:400;" onclick="editBankStartingBalance('${currentYard}')">(edit)</span>` : ""}</div><div class="value">${fmtMoney0(reg.startingBalance)}</div></div>
-        <div class="tile"><div class="label">Next check # ${can("editBankAccounts") ? `<span class="link" style="font-weight:400;" onclick="editNextCheckNumber('${currentYard}')">(edit)</span>` : ""}</div><div class="value">${acct && acct.nextCheckNumber ? "#" + acct.nextCheckNumber : "—"}</div></div>
+        <div class="tile"><div class="label">Next check # <span class="link" style="font-weight:400;" onclick="currentRoute='settings'; settingsTab='bank'; render();">(Settings)</span></div><div class="value">${acct && acct.nextCheckNumber ? "#" + acct.nextCheckNumber : "—"}</div></div>
         <div class="tile"><div class="label">Register balance</div><div class="value">${fmtMoney0(reg.registerBalance)}</div></div>
         <div class="tile"><div class="label">Cleared (bank) balance</div><div class="value">${fmtMoney0(reg.clearedBalance)}</div></div>
         <div class="tile"><div class="label">Outstanding</div><div class="value"${reg.outstandingCount ? ` style="color:var(--warning);"` : ""}>${fmtMoney0(reg.outstandingTotal)}${reg.outstandingCount ? ` (${reg.outstandingCount})` : ""}</div></div>
@@ -6969,11 +6969,40 @@ function viewDocuments() {
 }
 let settingsTab = "overview";
 function viewSettings() {
-  const tabs = [["overview","Overview"],["users","Users"],["roles","Roles"],["buttons","Button Maker"]];
-  const bodies = { overview: viewSettingsOverview, users: viewSettingsUsers, roles: viewSettingsRoles, buttons: viewSettingsButtons };
+  const tabs = [["overview","Overview"],["users","Users"],["roles","Roles"],["bank","Bank Accounts & Checks"],["buttons","Button Maker"]];
+  const bodies = { overview: viewSettingsOverview, users: viewSettingsUsers, roles: viewSettingsRoles, bank: viewSettingsBank, buttons: viewSettingsButtons };
   return `
     <div class="tabs">${tabs.map(([id,label]) => `<button class="tab ${settingsTab===id?'active':''}" onclick="settingsTab='${id}'; render();">${label}</button>`).join("")}</div>
     ${bodies[settingsTab]()}
+  `;
+}
+
+/* ---------------- Settings — Bank Accounts & Checks ----------------
+   One row per yard: the account checks are drawn on, its opening balance for the register, and
+   the next check number to hand out. Set the check number to match the stock in the drawer; the
+   cashier can still type a different number on any individual check. */
+function viewSettingsBank() {
+  const canEdit = can("editBankAccounts");
+  const issued = (yard) => remittances.filter(r => r.method === "Check" && r.account === yard && !r.voided).length;
+  return `
+    ${!canEdit ? `<div class="banner" style="border-left-color:var(--critical);">Read-only — changing an account's opening balance or next check number needs the "Edit bank accounts" permission.</div>` : ""}
+    <div class="panel">
+      <div class="panel-head"><h2>Bank accounts — one per yard</h2></div>
+      <div class="footnote" style="margin-bottom:10px;">Checks are numbered in order per account. Set <b>Next check #</b> to the number printed on the next blank check in that yard's drawer; every check the cashier or AP cuts from then on takes the next number automatically (a typed number on a specific check still wins, and the sequence skips past it).</div>
+      <table>
+        <thead><tr><th>Yard</th><th>Bank</th><th>Account</th><th class="num">Opening balance</th><th class="num">Next check #</th><th class="num">Checks issued</th><th></th></tr></thead>
+        <tbody>${YARDS.map(y => { const a = findBankAccount(y.code); return `<tr>
+          <td><b>${yardName(y.code)}</b></td>
+          <td>${a ? htmlEsc(a.bankName) : "—"}</td>
+          <td>${a ? "••" + htmlEsc(a.last4) : "—"}</td>
+          <td class="num">${a ? fmtMoney(a.startingBalance) : "—"}</td>
+          <td class="num"><b>${a && a.nextCheckNumber ? "#" + a.nextCheckNumber : "—"}</b></td>
+          <td class="num">${issued(y.code)}</td>
+          <td style="display:flex; gap:6px; flex-wrap:wrap;">${canEdit && a ? `<button class="btn ghost small" onclick="editNextCheckNumber('${y.code}')">Set next check #</button><button class="btn ghost small" onclick="editBankStartingBalance('${y.code}')">Set opening balance</button>` : ""}</td>
+        </tr>`; }).join("")}</tbody>
+      </table>
+      <div class="footnote" style="margin-top:8px;">Bank name and last four digits are set up in the database for now; a form for them comes with the QuickBooks work.</div>
+    </div>
   `;
 }
 
