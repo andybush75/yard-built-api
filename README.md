@@ -110,7 +110,15 @@ individual grant) includes it; everything else is open to any logged-in user.
   history in `src/public/data/`.
 - `PATCH /tickets/:id/trailer` — set which trailer hauled a load, any time.
 - `GET /settings`, `PATCH /settings` (`manageUsers`) — app-wide settings (`app_settings` table):
-  trailer loads goal, tons targets by type.
+  trailer loads goal, tons targets by type, inspection checklist templates.
+- Maintenance (`/maintenance/...`): `GET/POST/PATCH assets` (fleet number is the id; status up/down,
+  meter, per-unit custom checklist items); `GET/POST/PATCH pm` + `POST pm/:id/generate` (opens a
+  work order, resets the schedule); `GET/POST/PATCH work-orders` (ids `LIS.<yard>.<FP|TRAN>.<n>`;
+  status board unassigned → not_started → in_progress → waiting → review → complete; assigning
+  notifies the assignee; shop invoice as a ≤4 MB data URL, left out of the list); `GET/POST
+  inspections` (`INS-<n>`, scored, updates the asset meter). Creating a work order from failed
+  inspection items (`fromInspectionId`) needs `assignWorkOrderItems`.
+- `GET /notifications` (own inbox), `PATCH /notifications/read-all`, `PATCH /notifications/:id`.
 
 Every action on a ticket writes an `audit_log` row (`src/audit.js`); the ticket timeline is those rows.
 

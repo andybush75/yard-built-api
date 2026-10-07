@@ -273,6 +273,56 @@ async function main() {
   const deactTrailer = await req("PATCH", `/trailers/${trailer.body.id}`, { token, body: { active: false, carrierId: "" } });
   assert(deactTrailer.status === 200 && deactTrailer.body.active === false && deactTrailer.body.carrier_id === null, "a trailer can be deactivated and its carrier cleared");
 
+  // ---- Maintenance ----
+  const assetId = `E${stamp % 1000}`;
+  const asset = await req("POST", "/maintenance/assets", { token, body: { id: assetId.toLowerCase(), yard: "COLBY", year: 2019, make: "Caterpillar", model: "336", type: "Excavator", meterType: "Hours", meter: 4200 } });
+  assert(asset.status === 201 && asset.body.id === assetId && asset.body.status === "up", "an asset can be created (id upper-cased)");
+  const dupeAsset = await req("POST", "/maintenance/assets", { token, body: { id: assetId, yard: "COLBY", type: "Excavator" } });
+  assert(dupeAsset.status === 409, "duplicate asset id is rejected");
+  const down = await req("PATCH", `/maintenance/assets/${assetId}`, { token, body: { status: "down" } });
+  assert(down.status === 200 && down.body.status === "down", "asset can be marked down");
+  const badStatus = await req("PATCH", `/maintenance/assets/${assetId}`, { token, body: { status: "sideways" } });
+  assert(badStatus.status === 400, "an unknown asset status is rejected");
+
+  const pm = await req("POST", "/maintenance/pm", { token, body: { assetId, name: "250-Hour Service", trigger: "meter", interval: 250 } });
+  assert(pm.status === 201 && parseFloat(pm.body.last_done_meter) === 4200, "a meter PM schedule starts from the asset's current meter");
+  const gen = await req("POST", `/maintenance/pm/${pm.body.id}/generate`, { token });
+  assert(gen.status === 201 && /^LIS\.CO\.FP\.\d+$/.test(gen.body.workOrder.id) && gen.body.workOrder.status === "not_started", "generating from a PM opens a not-started work order with a LIS.yard.FP.n id: " + gen.body.workOrder.id);
+
+  const wo = await req("POST", "/maintenance/work-orders", { token, body: { assetId, title: "Hydraulic hose leak", priority: 5 } });
+  assert(wo.status === 201 && wo.body.status === "unassigned" && wo.body.assignee_id === null, "a work order with no assignee starts Unassigned");
+  const assign = await req("PATCH", `/maintenance/work-orders/${wo.body.id}`, { token, body: { assigneeId: opLogin.body.user.id } });
+  assert(assign.status === 200 && assign.body.status === "not_started" && assign.body.assignee_name === "Demo Scale Operator", "assigning moves it to Not Started and names the assignee");
+  const inbox = await req("GET", "/notifications", { token: opToken });
+  assert(inbox.status === 200 && inbox.body.some((n) => n.ref_id === wo.body.id && n.read === false), "the assignee gets a notification");
+  const readAll = await req("PATCH", "/notifications/read-all", { token: opToken });
+  assert(readAll.status === 200 && readAll.body.marked >= 1, "notifications can be marked read");
+  const otherInbox = await req("GET", "/notifications", { token });
+  assert(!otherInbox.body.some((n) => n.ref_id === wo.body.id), "notifications are private to the assignee");
+  const advance = await req("PATCH", `/maintenance/work-orders/${wo.body.id}`, { token: opToken, body: { status: "in_progress" } });
+  assert(advance.status === 200 && advance.body.status === "in_progress", "the assignee (a scale operator) can advance their own work order");
+  const invoice = await req("PATCH", `/maintenance/work-orders/${wo.body.id}`, { token, body: { shopName: "Colby Diesel", invoiceAmount: 412.5, invoiceFileName: "inv.png", invoiceDataUrl: "data:image/png;base64,iVBORw0KGgo=" } });
+  assert(invoice.status === 200 && invoice.body.shop_name === "Colby Diesel" && parseFloat(invoice.body.invoice_amount) === 412.5, "a shop invoice can be attached");
+  const woList = await req("GET", "/maintenance/work-orders?yard=COLBY", { token });
+  const listed = woList.body.find((w) => w.id === wo.body.id);
+  assert(listed && listed.has_invoice_file === true && listed.invoice_data_url === undefined, "the list reports an invoice file without shipping it");
+  const complete = await req("PATCH", `/maintenance/work-orders/${wo.body.id}`, { token, body: { status: "complete" } });
+  assert(complete.status === 200 && complete.body.completed_at && complete.body.completed_by_name === "Andy Bush", "completing records when and by whom");
+  const badWoStatus = await req("PATCH", `/maintenance/work-orders/${wo.body.id}`, { token, body: { status: "done" } });
+  assert(badWoStatus.status === 400, "an unknown work order status is rejected");
+
+  const results = [{ category: "Safety", item: "Backup Alarm", pass: false, note: "Not working" }, { category: "Fluids", item: "Engine Oil", pass: true, note: null }, { category: "Fluids", item: "Fuel", pass: true, note: null }];
+  const insp = await req("POST", "/maintenance/inspections", { token: opToken, body: { assetId, meterValue: 4250, results, completedBy: "R. Ortiz" } });
+  assert(insp.status === 201 && /^INS-\d+$/.test(insp.body.id) && parseFloat(insp.body.score) === 66.7, "an inspection is scored (2 of 3 = 66.7%)");
+  const assetAfter = await req("GET", "/maintenance/assets?yard=COLBY&includeInactive=true", { token });
+  assert(parseFloat(assetAfter.body.find((a) => a.id === assetId).meter) === 4250, "the inspection's meter reading updates the asset");
+  const triageDenied = await req("POST", "/maintenance/work-orders", { token: opToken, body: { assetId, title: "Failed inspection: Backup Alarm", items: [results[0]], fromInspectionId: insp.body.id } });
+  assert(triageDenied.status === 403, "turning failed items into a work order needs assignWorkOrderItems");
+  const triageOk = await req("POST", "/maintenance/work-orders", { token, body: { assetId, title: "Failed inspection: Backup Alarm", items: [results[0]], priority: 4, fromInspectionId: insp.body.id } });
+  assert(triageOk.status === 201 && triageOk.body.from_inspection_id === insp.body.id && triageOk.body.items.length === 1, "an admin can create a work order from failed inspection items");
+  const badResults = await req("POST", "/maintenance/inspections", { token, body: { assetId, results: [{ item: "x" }] } });
+  assert(badResults.status === 400, "inspection results need pass true/false per item");
+
   // Permission enforcement: a scale operator can post tickets but cannot cut checks or touch bank
   // accounts. Uses the demo-only operator seeded by db/seed.js.
   const opLogin = await req("POST", "/auth/login", { body: { email: "scale.demo@example.com", password: "changeme123" } });

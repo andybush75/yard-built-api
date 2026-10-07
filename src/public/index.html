@@ -1268,6 +1268,44 @@ function trailerPickerHtml(selectId, selected, label = "Trailer / rail car (opti
   return `<div><label>${label}</label><select id="${selectId}"><option value="">— none / unknown —</option>${list.map(t => `<option value="${t.id}" ${t.id === selected ? "selected" : ""}>${htmlEsc(t.number)} · ${htmlEsc(t.type)} · ${yardName(t.yard)}${t.carrierName ? " · " + htmlEsc(t.carrierName) : ""}</option>`).join("")}</select></div>`;
 }
 function pickedTrailer(selectId) { const el = document.getElementById(selectId); return el && el.value ? el.value : null; }
+function mapApiAsset(a) {
+  return { id: a.id, yard: a.yard, year: a.year || null, make: a.make || "—", model: a.model || "—", type: a.type, meterType: a.meter_type, meter: parseFloat(a.meter) || 0, status: a.status, customItems: a.custom_items || [], notes: a.notes || "", active: a.active !== false };
+}
+function mapApiPm(p) {
+  return { id: p.id, assetId: p.asset_id, name: p.name, trigger: p.trigger, interval: p.interval, lastDoneMeter: p.last_done_meter != null ? parseFloat(p.last_done_meter) : null, lastDoneDate: isoDay(p.last_done_date) };
+}
+function mapApiWorkOrder(w) {
+  return {
+    id: w.id, assetId: w.asset_id, yard: w.yard, title: w.title, priority: w.priority, status: w.status, assigneeId: w.assignee_id || null,
+    issuedDate: isoDay(w.issued_date), statusChangedDate: isoDay(w.status_changed_at), statusChangedAt: w.status_changed_at, meterAtIssue: w.meter_at_issue != null ? parseFloat(w.meter_at_issue) : null,
+    fromPM: w.from_pm_id || null, fromInspection: w.from_inspection_id || null, items: w.items || null, shopName: w.shop_name || null,
+    invoice: (w.shop_name || w.invoice_amount != null || w.invoice_file_name || w.has_invoice_file || w.invoice_data_url)
+      ? { amount: w.invoice_amount != null ? parseFloat(w.invoice_amount) : null, fileName: w.invoice_file_name || null, dataUrl: w.invoice_data_url || null, hasFile: !!(w.has_invoice_file || w.invoice_data_url) } : null,
+    completedAt: w.completed_at || null, completedBy: w.completed_by_name || null, notes: w.notes || "",
+  };
+}
+function mapApiInspection(i) {
+  return { id: i.id, assetId: i.asset_id, yard: i.yard, date: isoDay(i.date), meterValue: i.meter_value != null ? parseFloat(i.meter_value) : 0, service: i.service, type: i.type, completedBy: i.completed_by || "—", results: i.results || [], score: parseFloat(i.score) };
+}
+function mapApiNotification(n) {
+  return { id: n.id, userId: n.user_id, woId: n.ref_type === "work_order" ? n.ref_id : null, message: n.message, createdAt: isoDay(n.created_at), read: !!n.read };
+}
+// Replaces a work order in the local list with the server's version.
+function absorbWorkOrder(row) {
+  const m = mapApiWorkOrder(row);
+  const i = workOrders.findIndex(w => w.id === m.id);
+  if (i >= 0) workOrders[i] = m; else workOrders.push(m);
+  return m;
+}
+// Checklist templates live in app settings so an edit applies on every station, not just this one.
+function applyInspectionTemplates(saved) {
+  Object.keys(INSPECTION_TEMPLATES).forEach(k => delete INSPECTION_TEMPLATES[k]);
+  Object.entries(saved).forEach(([k, v]) => { INSPECTION_TEMPLATES[k] = v; });
+}
+async function saveInspectionTemplates() {
+  try { await apiFetch("/settings", { method: "PATCH", body: JSON.stringify({ inspection_templates: INSPECTION_TEMPLATES }) }); }
+  catch (err) { alert("Template change shown here but not saved: " + err.message); }
+}
 function mapApiBankAccount(b) {
   return { yard: b.yard, bankName: b.bank_name, last4: b.last4, startingBalance: parseFloat(b.starting_balance) || 0, nextCheckNumber: b.next_check_number };
 }
@@ -1340,7 +1378,7 @@ async function patchParty(kind, id, fields) {
 // login. Any (yard, commodity) pair with no rows yet in inventory_balances is left at qty 0 /
 // avgCost = that commodity's master price, matching how the backend itself would start it.
 async function bootstrapFromApi() {
-  const [apiCommodities, balances, ledger, apiTickets, apiVendors, apiCustomers, apiUsers, apiRoles, apiRemittances, apiBankAccounts, apiFreight, apiLanes, apiCarriers, apiTrailers, apiSettings] = await Promise.all([
+  const [apiCommodities, balances, ledger, apiTickets, apiVendors, apiCustomers, apiUsers, apiRoles, apiRemittances, apiBankAccounts, apiFreight, apiLanes, apiCarriers, apiTrailers, apiSettings, apiAssets, apiPm, apiWorkOrders, apiInspections, apiNotifications] = await Promise.all([
     apiFetch("/commodities"),
     apiFetch("/inventory/balances"),
     apiFetch("/inventory/ledger?limit=1000"),
@@ -1356,7 +1394,18 @@ async function bootstrapFromApi() {
     apiFetch("/carriers"),
     apiFetch("/trailers"),
     apiFetch("/settings"),
+    apiFetch("/maintenance/assets?includeInactive=true"),
+    apiFetch("/maintenance/pm"),
+    apiFetch("/maintenance/work-orders?limit=2000"),
+    apiFetch("/maintenance/inspections?limit=1000"),
+    apiFetch("/notifications"),
   ]);
+  assets = apiAssets.map(mapApiAsset);
+  pmSchedules = apiPm.map(mapApiPm);
+  workOrders = apiWorkOrders.map(mapApiWorkOrder).reverse();
+  inspections = apiInspections.map(mapApiInspection);
+  notifications = apiNotifications.map(mapApiNotification).reverse();
+  if (apiSettings && apiSettings.inspection_templates) applyInspectionTemplates(apiSettings.inspection_templates);
   freightTickets = apiFreight.map(mapApiFreight).reverse();
   freightLanes = apiLanes.map(mapApiLane);
   carriers = apiCarriers.map(mapApiCarrier);
@@ -1442,12 +1491,21 @@ function notifyAssignment(wo, userId) {
 }
 function myNotifications() { return notifications.filter(n => n.userId === currentUserId).slice().reverse(); }
 function unreadNotifCount() { return myNotifications().filter(n => !n.read).length; }
-function toggleNotifPanel() { notifPanelOpen = !notifPanelOpen; render(); }
-function markAllNotifsRead() { notifications.forEach(n => { if (n.userId === currentUserId) n.read = true; }); render(); }
+async function refreshNotifications() {
+  if (!authToken) return;
+  try { notifications = (await apiFetch("/notifications")).map(mapApiNotification).reverse(); render(); } catch (e) { /* bell just stays as it was */ }
+}
+function toggleNotifPanel() { notifPanelOpen = !notifPanelOpen; render(); if (notifPanelOpen) refreshNotifications(); }
+function markAllNotifsRead() {
+  notifications.forEach(n => { if (n.userId === currentUserId) n.read = true; });
+  if (authToken) apiFetch("/notifications/read-all", { method: "PATCH" }).catch(() => {});
+  render();
+}
 function openNotification(id) {
   const n = notifications.find(x => x.id === id);
   if (!n) return;
   n.read = true;
+  if (authToken) apiFetch(`/notifications/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ read: true }) }).catch(() => {});
   notifPanelOpen = false;
   const wo = findWorkOrder(n.woId);
   if (wo) currentYard = wo.yard;
@@ -4477,28 +4535,37 @@ function addDays(dateStr, n) {
   d.setDate(d.getDate() + n);
   return d.toISOString().slice(0, 10);
 }
-function generateWOFromPM(pmId) {
-  const pm = pmSchedules.find(p => p.id === pmId);
-  const a = findAsset(pm.assetId);
-  const typeCode = a.id.startsWith("E") ? "FP" : "TRAN";
-  const id = `LIS.${MAINT_YARD_CODE[a.yard]}.${typeCode}.${woSeq++}`;
-  workOrders.push({ id, assetId: a.id, yard: a.yard, title: pm.name, priority: 3, status: "not_started", assigneeId: null, issuedDate: CURRENT_DATE, statusChangedDate: CURRENT_DATE, meterAtIssue: a.meter, fromPM: pm.id });
-  if (pm.trigger === "meter") { pm.lastDoneMeter = a.meter; } else { pm.lastDoneDate = CURRENT_DATE; }
+async function generateWOFromPM(pmId) {
+  const pm = pmSchedules.find(p => p.id === pmId); if (!pm) return;
+  try {
+    const res = await apiFetch(`/maintenance/pm/${encodeURIComponent(pmId)}/generate`, { method: "POST" });
+    absorbWorkOrder(res.workOrder);
+    Object.assign(pm, mapApiPm(res.pm));
+  } catch (err) { alert("Couldn't generate work order: " + err.message); }
   render();
 }
-function addAsset() {
+async function addAsset() {
   const id = document.getElementById("as-id").value.trim().toUpperCase();
   if (!id) { alert("Enter an asset/fleet number."); return; }
   if (findAsset(id)) { alert("That asset number is already in use."); return; }
-  assets.push({
-    id, yard: currentYard, year: Number(document.getElementById("as-year").value) || new Date(CURRENT_DATE).getFullYear(),
-    make: document.getElementById("as-make").value.trim() || "—", model: document.getElementById("as-model").value.trim() || "—",
+  const body = {
+    id, yard: currentYard, year: Number(document.getElementById("as-year").value) || null,
+    make: document.getElementById("as-make").value.trim() || null, model: document.getElementById("as-model").value.trim() || null,
     type: document.getElementById("as-type").value, meterType: document.getElementById("as-metertype").value,
-    meter: Number(document.getElementById("as-meter").value) || 0, status: "up",
-  });
+    meter: Number(document.getElementById("as-meter").value) || 0,
+  };
+  try { assets.push(mapApiAsset(await apiFetch("/maintenance/assets", { method: "POST", body: JSON.stringify(body) }))); }
+  catch (err) { alert("Couldn't add asset: " + err.message); return; }
   newAssetOpen = false; render();
 }
-function toggleAssetStatus(id) { const a = findAsset(id); a.status = a.status === "up" ? "down" : "up"; render(); }
+async function patchAsset(id, fields) {
+  const a = findAsset(id); if (!a) return null;
+  try { Object.assign(a, mapApiAsset(await apiFetch(`/maintenance/assets/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(fields) }))); }
+  catch (err) { alert("Couldn't save asset: " + err.message); }
+  render();
+  return a;
+}
+function toggleAssetStatus(id) { const a = findAsset(id); if (a) patchAsset(id, { status: a.status === "up" ? "down" : "up" }); }
 let newAssetOpen = false, newPMOpen = false, newWOOpen = false;
 
 let workOrders = [
@@ -4516,14 +4583,18 @@ let workOrders = [
 let woSeq = 1211;
 function findWorkOrder(id) { return workOrders.find(w => w.id === id); }
 function woHoursInStatus(wo) { return daysSince(wo.statusChangedDate) * 24; }
-function moveWorkOrder(id, dir) {
-  const wo = findWorkOrder(id);
-  const idx = WO_STATUSES.indexOf(wo.status);
-  wo.status = WO_STATUSES[Math.min(WO_STATUSES.length - 1, Math.max(0, idx + dir))];
-  wo.statusChangedDate = CURRENT_DATE;
+async function patchWorkOrder(id, fields) {
+  try { absorbWorkOrder(await apiFetch(`/maintenance/work-orders/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(fields) })); }
+  catch (err) { alert("Couldn't update work order: " + err.message); }
   render();
 }
-function addWorkOrder() {
+function moveWorkOrder(id, dir) {
+  const wo = findWorkOrder(id); if (!wo) return;
+  const idx = WO_STATUSES.indexOf(wo.status);
+  const next = WO_STATUSES[Math.min(WO_STATUSES.length - 1, Math.max(0, idx + dir))];
+  if (next !== wo.status) patchWorkOrder(id, { status: next });
+}
+async function addWorkOrder() {
   const assetId = document.getElementById("wo-asset").value;
   const a = findAsset(assetId);
   if (!a) { alert("Add an asset first, then open a work order for it."); return; }
@@ -4531,22 +4602,11 @@ function addWorkOrder() {
   if (!title) { alert("Describe the problem or job before submitting."); return; }
   const priority = Number(document.getElementById("wo-priority").value);
   const assigneeId = document.getElementById("wo-assignee").value || null;
-  const typeCode = a.id.startsWith("E") ? "FP" : "TRAN";
-  const id = `LIS.${MAINT_YARD_CODE[a.yard]}.${typeCode}.${woSeq++}`;
-  const wo = { id, assetId: a.id, yard: a.yard, title, priority, status: assigneeId ? "not_started" : "unassigned", assigneeId, issuedDate: CURRENT_DATE, statusChangedDate: CURRENT_DATE };
-  workOrders.push(wo);
-  if (assigneeId) notifyAssignment(wo, assigneeId);
+  try { absorbWorkOrder(await apiFetch("/maintenance/work-orders", { method: "POST", body: JSON.stringify({ assetId: a.id, title, priority, assigneeId }) })); }
+  catch (err) { alert("Couldn't create work order: " + err.message); return; }
   newWOOpen = false; render();
 }
-function reassignWorkOrder(id, userId) {
-  const wo = findWorkOrder(id);
-  if (!wo) return;
-  const prevId = wo.assigneeId;
-  wo.assigneeId = userId || null;
-  if (wo.assigneeId && wo.status === "unassigned") { wo.status = "not_started"; wo.statusChangedDate = CURRENT_DATE; }
-  if (wo.assigneeId && wo.assigneeId !== prevId) notifyAssignment(wo, wo.assigneeId);
-  render();
-}
+function reassignWorkOrder(id, userId) { patchWorkOrder(id, { assigneeId: userId || "" }); }
 
 /* ---------------- Work order shop/invoice attachment ----------------
    For units sent out to a third-party shop — record who did the work and attach their
@@ -4564,10 +4624,9 @@ function saveInvoice(id) {
   const fileInput = document.getElementById(`inv-file-${id}`);
   const file = fileInput && fileInput.files[0];
   const finish = (dataUrl, fileName) => {
-    wo.shopName = shopName;
-    wo.invoice = { fileName: fileName || (wo.invoice ? wo.invoice.fileName : null), dataUrl: dataUrl || (wo.invoice ? wo.invoice.dataUrl : null), amount, uploadedAt: CURRENT_DATE };
+    if (dataUrl && dataUrl.length > 4 * 1024 * 1024 * 1.37) { alert("That file is over 4 MB — take a smaller photo or save it as a PDF."); return; }
     woInvoiceFormId = null;
-    render();
+    patchWorkOrder(id, { shopName, invoiceAmount: amount, invoiceFileName: fileName || undefined, invoiceDataUrl: dataUrl || undefined });
   };
   if (file) {
     const reader = new FileReader();
@@ -4580,7 +4639,16 @@ function saveInvoice(id) {
 function removeInvoice(id) {
   const wo = findWorkOrder(id); if (!wo) return;
   if (!confirm("Remove the shop/invoice info from this work order?")) return;
-  wo.shopName = null; wo.invoice = null; render();
+  patchWorkOrder(id, { invoiceDataUrl: null, invoiceFileName: null });
+}
+// The list leaves the invoice file out (it can be big); fetch the one work order when asked for it.
+async function openInvoiceFile(id) {
+  try {
+    const w = await apiFetch(`/maintenance/work-orders/${encodeURIComponent(id)}`);
+    if (!w.invoice_data_url) { alert("No invoice file on this work order."); return; }
+    const win = window.open("", "_blank");
+    if (win) { win.document.write(w.invoice_data_url.startsWith("data:application/pdf") ? `<iframe src="${w.invoice_data_url}" style="border:0; width:100vw; height:100vh;"></iframe>` : `<img src="${w.invoice_data_url}" style="max-width:100%;" />`); }
+  } catch (err) { alert("Couldn't open invoice: " + err.message); }
 }
 function woShopInvoiceHtml(w) {
   if (woInvoiceFormId === w.id) {
@@ -4592,7 +4660,7 @@ function woShopInvoiceHtml(w) {
     </div></div>`;
   }
   if (w.shopName || w.invoice) {
-    return `<div class="wo-shop">Shop: ${w.shopName || "—"}${w.invoice && w.invoice.amount != null ? ` · ${fmtMoney(w.invoice.amount)}` : ""}${w.invoice && w.invoice.dataUrl ? ` · <a href="${w.invoice.dataUrl}" target="_blank" rel="noopener">View invoice</a>` : ""}
+    return `<div class="wo-shop">Shop: ${w.shopName || "—"}${w.invoice && w.invoice.amount != null ? ` · ${fmtMoney(w.invoice.amount)}` : ""}${w.invoice && (w.invoice.hasFile || w.invoice.dataUrl) ? ` · <span class="link" onclick="openInvoiceFile('${w.id}')">View invoice${w.invoice.fileName ? ` (${htmlEsc(w.invoice.fileName)})` : ""}</span>` : ""}
       ${!isCorp() ? ` · <span class="btn ghost" onclick="startAttachInvoice('${w.id}')">Edit</span><span class="btn ghost" onclick="removeInvoice('${w.id}')">Remove</span>` : ""}
     </div>`;
   }
@@ -4622,7 +4690,7 @@ function deriveWOTitleFromItems(items) {
   if (items.length === 1) return `Failed inspection: ${items[0].item}`;
   return `Failed inspection: ${items[0].item} (+${items.length - 1} more)`;
 }
-function createWorkOrderFromTriage() {
+async function createWorkOrderFromTriage() {
   if (!can('assignWorkOrderItems')) { alert("You don't have access to assign flagged items to work orders."); return; }
   const t = inspectionTriage; if (!t) return;
   const chosen = t.itemsLeft.filter((_, i) => t.selected.has(i));
@@ -4631,39 +4699,29 @@ function createWorkOrderFromTriage() {
   const a = findAsset(insp.assetId);
   const assigneeId = document.getElementById("triage-assignee").value || null;
   const priority = Number(document.getElementById("triage-priority").value);
-  const typeCode = a.id.startsWith("E") ? "FP" : "TRAN";
-  const woId = `LIS.${MAINT_YARD_CODE[a.yard]}.${typeCode}.${woSeq++}`;
-  const wo = {
-    id: woId, assetId: a.id, yard: a.yard, title: deriveWOTitleFromItems(chosen), items: chosen,
-    priority, status: assigneeId ? "not_started" : "unassigned", assigneeId,
-    issuedDate: CURRENT_DATE, statusChangedDate: CURRENT_DATE, fromInspection: insp.id,
-  };
-  workOrders.push(wo);
-  if (assigneeId) notifyAssignment(wo, assigneeId);
-  t.createdIds.push(woId);
+  let wo;
+  try {
+    wo = absorbWorkOrder(await apiFetch("/maintenance/work-orders", { method: "POST", body: JSON.stringify({ assetId: a.id, title: deriveWOTitleFromItems(chosen), items: chosen, priority, assigneeId, fromInspectionId: insp.id }) }));
+  } catch (err) { alert("Couldn't create work order: " + err.message); return; }
+  t.createdIds.push(wo.id);
   t.itemsLeft = t.itemsLeft.filter((_, i) => !t.selected.has(i));
   t.selected = new Set(t.itemsLeft.map((_, i) => i));
   if (!t.itemsLeft.length) inspectionTriage = null;
   render();
 }
-function finishTriageUnassigned() {
+async function finishTriageUnassigned() {
   if (!can('assignWorkOrderItems')) { alert("You don't have access to assign flagged items to work orders."); return; }
   const t = inspectionTriage; if (!t) return;
   if (!t.itemsLeft.length) { inspectionTriage = null; render(); return; }
   const insp = inspections.find(i => i.id === t.inspectionId);
   const a = findAsset(insp.assetId);
-  const typeCode = a.id.startsWith("E") ? "FP" : "TRAN";
-  const woId = `LIS.${MAINT_YARD_CODE[a.yard]}.${typeCode}.${woSeq++}`;
-  const wo = {
-    id: woId, assetId: a.id, yard: a.yard, title: deriveWOTitleFromItems(t.itemsLeft), items: t.itemsLeft.slice(),
-    priority: t.itemsLeft.length >= 2 ? 5 : 4, status: "unassigned", assigneeId: null,
-    issuedDate: CURRENT_DATE, statusChangedDate: CURRENT_DATE, fromInspection: insp.id,
-  };
-  workOrders.push(wo);
+  try {
+    absorbWorkOrder(await apiFetch("/maintenance/work-orders", { method: "POST", body: JSON.stringify({ assetId: a.id, title: deriveWOTitleFromItems(t.itemsLeft), items: t.itemsLeft.slice(), priority: t.itemsLeft.length >= 2 ? 5 : 4, fromInspectionId: insp.id }) }));
+  } catch (err) { alert("Couldn't create work order: " + err.message); return; }
   inspectionTriage = null;
   render();
 }
-function addPMSchedule() {
+async function addPMSchedule() {
   const assetId = document.getElementById("pm-asset").value;
   const a = findAsset(assetId);
   if (!a) { alert("Add an asset first, then schedule PM for it."); return; }
@@ -4671,7 +4729,8 @@ function addPMSchedule() {
   if (!name) { alert("Name the service (e.g. \"250-Hour Service\")."); return; }
   const trigger = document.getElementById("pm-trigger").value;
   const interval = Number(document.getElementById("pm-interval").value) || 1;
-  pmSchedules.push({ id: "PM-" + (pmSeq++), assetId: a.id, name, trigger, interval, lastDoneMeter: trigger === "meter" ? a.meter : null, lastDoneDate: trigger === "calendar" ? CURRENT_DATE : null });
+  try { pmSchedules.push(mapApiPm(await apiFetch("/maintenance/pm", { method: "POST", body: JSON.stringify({ assetId: a.id, name, trigger, interval }) }))); }
+  catch (err) { alert("Couldn't add schedule: " + err.message); return; }
   newPMOpen = false; render();
 }
 
@@ -4919,7 +4978,7 @@ function addTemplateCategory() {
   if (!INSPECTION_TEMPLATES[type]) INSPECTION_TEMPLATES[type] = {};
   if (INSPECTION_TEMPLATES[type][name] !== undefined) { alert("That category already exists for this asset type."); return; }
   INSPECTION_TEMPLATES[type][name] = [];
-  render();
+  saveInspectionTemplates(); render();
 }
 function removeTemplateCategory(catIdx) {
   const type = templateBuilderType;
@@ -4927,7 +4986,7 @@ function removeTemplateCategory(catIdx) {
   const items = INSPECTION_TEMPLATES[type][category] || [];
   if (items.length && !confirm(`"${category}" has ${items.length} item${items.length === 1 ? "" : "s"}. Remove the whole category?`)) return;
   delete INSPECTION_TEMPLATES[type][category];
-  render();
+  saveInspectionTemplates(); render();
 }
 function addTemplateItem(catIdx) {
   const type = templateBuilderType;
@@ -4936,13 +4995,13 @@ function addTemplateItem(catIdx) {
   const name = input.value.trim();
   if (!name) return;
   INSPECTION_TEMPLATES[type][category].push(name);
-  render();
+  saveInspectionTemplates(); render();
 }
 function removeTemplateItem(catIdx, itemIdx) {
   const type = templateBuilderType;
   const category = Object.keys(INSPECTION_TEMPLATES[type])[catIdx];
   INSPECTION_TEMPLATES[type][category].splice(itemIdx, 1);
-  render();
+  saveInspectionTemplates(); render();
 }
 function viewTemplateBuilder() {
   const type = templateBuilderType;
@@ -4979,12 +5038,10 @@ function addCustomChecklistItem(assetId) {
   const val = input.value.trim();
   if (!val) return;
   const a = findAsset(assetId);
-  a.customItems = a.customItems || [];
-  a.customItems.push(val);
-  render();
+  patchAsset(assetId, { customItems: [...(a.customItems || []), val] });
 }
-function removeCustomChecklistItem(assetId, idx) { const a = findAsset(assetId); a.customItems.splice(idx, 1); render(); }
-function submitInspection() {
+function removeCustomChecklistItem(assetId, idx) { const a = findAsset(assetId); patchAsset(assetId, { customItems: (a.customItems || []).filter((_, i) => i !== idx) }); }
+async function submitInspection() {
   const a = findAsset(inspectionFormAsset);
   if (!a) { alert("Pick an asset first."); return; }
   const checklist = inspectionChecklist(a);
@@ -4995,15 +5052,17 @@ function submitInspection() {
     note: document.getElementById(`insp-note-${i}`).value.trim() || null,
   }));
   const meterValue = Number(document.getElementById("insp-meter").value) || a.meter;
-  const completedBy = document.getElementById("insp-by").value.trim() || "Unassigned";
-  const score = scoreResults(results);
-  const id = "INS-" + (inspectionSeq++);
-  inspections.unshift({ id, assetId: a.id, yard: a.yard, date: CURRENT_DATE, meterValue, service: "Daily", type: inspectionTypeLabel(), completedBy, results, score });
-  a.meter = meterValue;
+  const completedBy = document.getElementById("insp-by").value.trim() || null;
+  let insp;
+  try {
+    insp = mapApiInspection(await apiFetch("/maintenance/inspections", { method: "POST", body: JSON.stringify({ assetId: a.id, meterValue, completedBy, results, service: "Daily", type: inspectionTypeLabel(), date: CURRENT_DATE }) }));
+  } catch (err) { alert("Couldn't save inspection: " + err.message); return; }
+  inspections.unshift(insp);
+  if (meterValue >= a.meter) a.meter = meterValue;
   const failed = results.filter(r => !r.pass);
   inspectionFormAsset = null;
-  inspectionDetailId = id;
-  if (failed.length) startInspectionTriage(id, failed);
+  inspectionDetailId = insp.id;
+  if (failed.length) startInspectionTriage(insp.id, failed);
   render();
 }
 function viewInspectionDetailPanel(insp) {
