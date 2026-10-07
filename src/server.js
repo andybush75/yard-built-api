@@ -33,6 +33,7 @@ app.use("/lanes", require("./routes/lanes"));
 app.use("/trailers", require("./routes/trailers"));
 app.use("/settings", require("./routes/settings"));
 app.use("/maintenance", require("./routes/maintenance"));
+app.use("/transfers", require("./routes/transfers"));
 app.use("/notifications", require("./routes/notifications"));
 
 // Centralized error handler — every route above is async and lets exceptions bubble up to this,
