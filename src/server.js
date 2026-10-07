@@ -32,6 +32,8 @@ app.use("/freight", require("./routes/freight"));
 app.use("/lanes", require("./routes/lanes"));
 app.use("/trailers", require("./routes/trailers"));
 app.use("/settings", require("./routes/settings"));
+app.use("/maintenance", require("./routes/maintenance"));
+app.use("/notifications", require("./routes/notifications"));
 
 // Centralized error handler — every route above is async and lets exceptions bubble up to this,
 // rather than each one needing its own try/catch boilerplate for unexpected DB errors.
