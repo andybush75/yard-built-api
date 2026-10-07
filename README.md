@@ -93,6 +93,15 @@ individual grant) includes it; everything else is open to any logged-in user.
   emailed / cleared flags), `POST /remittances/:id/void` (body `reason`) — writes need `payRemittances`
 - `GET /search?q=` — tickets (id, party, hold description, amount), dealers and customers (name,
   phone), and checks (number, payee) in one answer
+- `GET/POST /freight`, `GET /freight/:id`, `PATCH /freight/:id`, `POST /freight/:id/reconcile`
+  (`cost`), `POST /freight/:id/void` (`voidTickets`; body `reason`). One live freight ticket per scale
+  ticket. `placeholder: true` attaches at $0.01 as `Estimated`. Inbound freight (on a buy) is
+  capitalized into that yard/commodity's average cost on the server (`src/freightService.js`);
+  outbound (on a sell) never is. Responses are `{ freight, ledgerEntry }`.
+- `GET/POST/PATCH/DELETE /lanes` — route presets (origin, destination, preferred carrier, rate)
+- `GET/POST/PATCH /carriers`
+- `POST /remittances` also takes `freightIds`; one check can cover material and freight lines.
+  Placeholder (Estimated) freight can't be paid until reconciled.
 
 Every action on a ticket writes an `audit_log` row (`src/audit.js`); the ticket timeline is those rows.
 

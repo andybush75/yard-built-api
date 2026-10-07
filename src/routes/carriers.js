@@ -20,4 +20,17 @@ router.post("/", requireAuth, async (req, res) => {
   res.status(201).json(rows[0]);
 });
 
+router.patch("/:id", requireAuth, async (req, res) => {
+  const { name, phone, mc, notes, type, isContainerTruck, assetId } = req.body || {};
+  if (type !== undefined && !["owned", "common", "dedicated"].includes(type)) return res.status(400).json({ error: "type must be owned, common, or dedicated" });
+  const { rows } = await query(
+    `UPDATE carriers SET name = COALESCE($2, name), phone = COALESCE($3, phone), mc = COALESCE($4, mc), notes = COALESCE($5, notes),
+       type = COALESCE($6, type), is_container_truck = COALESCE($7, is_container_truck), asset_id = COALESCE($8, asset_id)
+     WHERE id = $1 RETURNING *`,
+    [req.params.id, name ?? null, phone ?? null, mc ?? null, notes ?? null, type ?? null, isContainerTruck ?? null, assetId ?? null]
+  );
+  if (!rows.length) return res.status(404).json({ error: "Not found" });
+  res.json(rows[0]);
+});
+
 module.exports = router;
