@@ -181,6 +181,61 @@ async function main() {
   const afterSet = await req("POST", `/tickets/${linked.body.id}/pay`, { token, body: { method: "Check", date: "2026-10-02" } });
   assert(afterSet.status === 200 && afterSet.body.remittance.check_number === "5000", "the next check uses the newly set number");
 
+  // ---- Freight ----
+  const carriersList = await req("GET", "/carriers", { token });
+  const redline = carriersList.body.find((c) => c.name === "Redline Trucking");
+  assert(!!redline, "seeded carrier is present");
+  const lane = await req("POST", "/lanes", { token, body: { origin: "Colby, KS", destination: "Regional Mill - Wichita", carrierId: redline.id, rateBasis: "flat", rate: 650 } });
+  assert(lane.status === 201 && lane.body.rate_basis === "flat", "a lane can be created");
+  const badLane = await req("POST", "/lanes", { token, body: { origin: "x", destination: "y", rateBasis: "per_banana" } });
+  assert(badLane.status === 400, "an unknown rate basis is rejected");
+
+  // Inbound freight on a buy capitalizes into the yard's average cost; a placeholder adds $0.01 now
+  // and the rest when reconciled.
+  const fbuy = await req("POST", "/tickets", { token, body: { type: "buy", date: "2026-10-02", yard: "COLBY", vendorId: hendricks.id, commodity: "HMS1", netWeight: 10000, price: 0.10, payment: "Check" } });
+  assert(fbuy.status === 201, "buy ticket for freight test created");
+  const avgBefore = parseFloat((await req("GET", "/inventory/balances?yard=COLBY&commodity=HMS1", { token })).body[0].avg_cost);
+  const fr = await req("POST", "/freight", { token, body: { ticketId: fbuy.body.id, carrierId: redline.id, laneId: lane.body.id, origin: "Dealer lot", destination: "Colby yard", placeholder: true } });
+  assert(fr.status === 201 && fr.body.freight.status === "Estimated" && parseFloat(fr.body.freight.cost) === 0.01, "placeholder freight attaches as Estimated at $0.01");
+  const dupeFreight = await req("POST", "/freight", { token, body: { ticketId: fbuy.body.id, carrierId: redline.id, cost: 100 } });
+  assert(dupeFreight.status === 409, "a second freight ticket on the same scale ticket is refused");
+  const payPlaceholder = await req("POST", "/remittances", { token, body: { payee: "Redline Trucking", method: "ACH", account: "COLBY", date: "2026-10-02", freightIds: [fr.body.freight.id] } });
+  assert(payPlaceholder.status === 409, "a placeholder freight ticket can't be paid until reconciled");
+  const rec = await req("POST", `/freight/${fr.body.freight.id}/reconcile`, { token, body: { cost: 500 } });
+  assert(rec.status === 200 && rec.body.freight.status === "Reconciled" && parseFloat(rec.body.freight.capitalized_amount) === 500, "reconciling sets the real cost and capitalizes it");
+  assert(rec.body.ledgerEntry && rec.body.ledgerEntry.type === "Freight-in", "capitalization writes a Freight-in ledger entry");
+  const balHMS1 = (await req("GET", "/inventory/balances?yard=COLBY&commodity=HMS1", { token })).body[0];
+  const expectedAvg = avgBefore + 500 / parseFloat(balHMS1.qty);
+  assert(Math.abs(parseFloat(balHMS1.avg_cost) - expectedAvg) < 0.00005, `inbound freight raised the average cost by freight ÷ on-hand qty (${avgBefore} -> ${balHMS1.avg_cost})`);
+
+  // Outbound freight on a sell is an AP cost only — average cost doesn't move.
+  const avgSellBefore = parseFloat((await req("GET", "/inventory/balances?yard=COLBY&commodity=HMS2", { token })).body[0].avg_cost);
+  const frOut = await req("POST", "/freight", { token, body: { ticketId: sell.body.id, carrierId: redline.id, origin: "Colby yard", destination: "Interstate", cost: 300 } });
+  assert(frOut.status === 201 && parseFloat(frOut.body.freight.capitalized_amount) === 0 && frOut.body.ledgerEntry === null, "outbound freight is not capitalized");
+  const avgSellAfter = parseFloat((await req("GET", "/inventory/balances?yard=COLBY&commodity=HMS2", { token })).body[0].avg_cost);
+  assert(avgSellAfter === avgSellBefore, "outbound freight leaves the average cost unchanged");
+
+  // One check covers a dealer's material and the carrier's freight (payee is just a name).
+  const combo = await req("POST", "/remittances", { token, body: { payee: "Redline Trucking", method: "Check", account: "COLBY", date: "2026-10-02", ticketIds: [fbuy.body.id], freightIds: [fr.body.freight.id, frOut.body.freight.id] } });
+  assert(combo.status === 201 && combo.body.lines.length === 3 && Math.abs(parseFloat(combo.body.total) - (1000 + 500 + 300)) < 0.001, "one remittance can combine ticket and freight lines");
+  const frPaid = await req("GET", `/freight/${fr.body.freight.id}`, { token });
+  assert(frPaid.body.paid === true && frPaid.body.remittance_id === combo.body.id, "freight is marked paid with its remittance");
+  const voidPaidFreight = await req("POST", `/freight/${fr.body.freight.id}/void`, { token, body: { reason: "x" } });
+  assert(voidPaidFreight.status === 409, "paid freight can't be voided until the remittance is");
+  const voidCombo = await req("POST", `/remittances/${combo.body.id}/void`, { token, body: { reason: "test" } });
+  assert(voidCombo.status === 200, "combined remittance can be voided");
+  const frUnpaid = await req("GET", `/freight/${fr.body.freight.id}`, { token });
+  assert(frUnpaid.body.paid === false && frUnpaid.body.remittance_id === null, "voiding the remittance re-opens the freight");
+  const voidFreightOk = await req("POST", `/freight/${fr.body.freight.id}/void`, { token, body: { reason: "wrong load" } });
+  assert(voidFreightOk.status === 200 && voidFreightOk.body.freight.voided_at && voidFreightOk.body.ledgerEntry, "voiding capitalized freight reverses the cost with a ledger entry");
+  const avgAfterVoid = parseFloat((await req("GET", "/inventory/balances?yard=COLBY&commodity=HMS1", { token })).body[0].avg_cost);
+  assert(Math.abs(avgAfterVoid - avgBefore) < 0.00005, "average cost is back where it started after the void");
+  const reattach = await req("POST", "/freight", { token, body: { ticketId: fbuy.body.id, carrierId: redline.id, cost: 450 } });
+  assert(reattach.status === 201, "freight can be re-attached after a void");
+  const pageWithFreight = await req("GET", `/tickets/${fbuy.body.id}`, { token });
+  assert(pageWithFreight.body.freight && pageWithFreight.body.freight.id === reattach.body.freight.id, "ticket page carries its live freight ticket");
+  assert(pageWithFreight.body.timeline.some((e) => e.action === "ticket.freight_attach") && pageWithFreight.body.timeline.some((e) => e.action === "ticket.freight_void"), "freight events show on the ticket timeline");
+
   // Permission enforcement: a scale operator can post tickets but cannot cut checks or touch bank
   // accounts. Uses the demo-only operator seeded by db/seed.js.
   const opLogin = await req("POST", "/auth/login", { body: { email: "scale.demo@example.com", password: "changeme123" } });

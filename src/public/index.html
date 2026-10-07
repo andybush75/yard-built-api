@@ -1225,6 +1225,35 @@ function mapApiRemittance(r) {
     voided: !!r.voided, cleared: !!r.cleared, clearedDate: isoDay(r.cleared_date), voidReason: r.void_reason || null,
   };
 }
+function mapApiFreight(f) {
+  return {
+    id: f.id, ticketId: f.ticket_id, carrierId: f.carrier_id || null, laneId: f.lane_id || null, origin: f.origin, destination: f.destination,
+    cost: parseFloat(f.cost), status: f.status, date: isoDay(f.date), notes: f.notes || "", paid: !!f.paid, remittanceId: f.remittance_id || null,
+    capitalizedAmount: parseFloat(f.capitalized_amount) || 0, capitalizedNote: f.capitalized_note || null,
+    voidedAt: f.voided_at || null, voidReason: f.void_reason || null,
+  };
+}
+function mapApiLane(l) {
+  return { id: l.id, origin: l.origin, destination: l.destination, carrierId: l.carrier_id || null, rateBasis: l.rate_basis, rate: parseFloat(l.rate) || 0, notes: l.notes || "" };
+}
+function mapApiCarrier(c) {
+  return { id: c.id, name: c.name, phone: c.phone || "", mc: c.mc || "", notes: c.notes || "", type: c.type, isContainerTruck: !!c.is_container_truck, assetId: c.asset_id || null, created: c.created_at ? c.created_at.slice(0, 10) : null };
+}
+// After the server attaches / reconciles / voids freight it returns { freight, ledgerEntry }. The
+// server owns the inventory cost basis, so we take its answer and refresh the yard's balance rather
+// than recomputing anything here.
+async function absorbFreightResult(res) {
+  const f = mapApiFreight(res.freight);
+  const i = freightTickets.findIndex(x => x.id === f.id);
+  if (f.voidedAt) { if (i >= 0) freightTickets.splice(i, 1); }
+  else if (i >= 0) freightTickets[i] = f; else freightTickets.push(f);
+  if (res.ledgerEntry) {
+    const l = res.ledgerEntry;
+    inventoryLedger.push({ id: l.id, date: isoDay(l.date), time: l.time || "", yard: l.yard, code: l.commodity, type: l.type, qtyChange: parseFloat(l.qty_change), unitPrice: l.unit_price != null ? parseFloat(l.unit_price) : null, balanceQty: parseFloat(l.balance_qty), avgCost: parseFloat(l.avg_cost), cashCost: parseFloat(l.cash_cost), ref: l.ref });
+    try { await refreshInventoryFor(l.yard, [l.commodity]); } catch (e) { /* balance refresh is best-effort */ }
+  }
+  return f;
+}
 function mapApiBankAccount(b) {
   return { yard: b.yard, bankName: b.bank_name, last4: b.last4, startingBalance: parseFloat(b.starting_balance) || 0, nextCheckNumber: b.next_check_number };
 }
@@ -1297,7 +1326,7 @@ async function patchParty(kind, id, fields) {
 // login. Any (yard, commodity) pair with no rows yet in inventory_balances is left at qty 0 /
 // avgCost = that commodity's master price, matching how the backend itself would start it.
 async function bootstrapFromApi() {
-  const [apiCommodities, balances, ledger, apiTickets, apiVendors, apiCustomers, apiUsers, apiRoles, apiRemittances, apiBankAccounts] = await Promise.all([
+  const [apiCommodities, balances, ledger, apiTickets, apiVendors, apiCustomers, apiUsers, apiRoles, apiRemittances, apiBankAccounts, apiFreight, apiLanes, apiCarriers] = await Promise.all([
     apiFetch("/commodities"),
     apiFetch("/inventory/balances"),
     apiFetch("/inventory/ledger?limit=1000"),
@@ -1308,7 +1337,13 @@ async function bootstrapFromApi() {
     apiFetch("/roles"),
     apiFetch("/remittances?limit=1000"),
     apiFetch("/bank-accounts"),
+    apiFetch("/freight?limit=2000"),
+    apiFetch("/lanes"),
+    apiFetch("/carriers"),
   ]);
+  freightTickets = apiFreight.map(mapApiFreight).reverse();
+  freightLanes = apiLanes.map(mapApiLane);
+  carriers = apiCarriers.map(mapApiCarrier);
 
   commodities = apiCommodities.map(mapApiCommodity);
   vendors = apiVendors.map(mapApiVendor);
@@ -1590,12 +1625,17 @@ function freightPending() { return freightTickets.filter(f => f.status === "Esti
 /* Each scale ticket (inbound or outbound) can carry at most one freight ticket — createFreightTicket()
    is the single choke point every attach path routes through, so that rule can't be bypassed. Returns
    the new freight ticket, or null if one is already attached (caller decides how to surface that). */
-function createFreightTicket({ ticketId, carrierId, laneId, origin, destination, cost, placeholder, notes }) {
+async function createFreightTicket({ ticketId, carrierId, laneId, origin, destination, cost, placeholder, notes }) {
   if (freightForTicket(ticketId).length > 0) return null;
-  const ft = { id: "FT-" + (freightSeq++), ticketId, carrierId, laneId, origin, destination, cost, status: placeholder ? "Estimated" : "Reconciled", date: CURRENT_DATE, notes: notes || "", paid: false, remittanceId: null, capitalizedAmount: 0, capitalizedNote: null };
-  freightTickets.push(ft);
-  capitalizeInboundFreight(ft.id);
-  return ft;
+  try {
+    const res = await apiFetch("/freight", { method: "POST", body: JSON.stringify({ ticketId, carrierId, laneId, origin, destination, cost, placeholder: !!placeholder, notes: notes || null, date: CURRENT_DATE }) });
+    const ft = await absorbFreightResult(res);
+    render();
+    return ft;
+  } catch (err) {
+    alert("Couldn't attach freight: " + err.message);
+    return null;
+  }
 }
 // Inbound freight (attached to a BUY ticket — hauling material INTO the yard) is a landed cost: it gets
 // capitalized straight into that commodity's inventory cost basis, spread over the shipment's own net
@@ -5132,7 +5172,7 @@ function viewFreightLanes() {
     </div>
   `;
 }
-function addLane() {
+async function addLane() {
   const origin = document.getElementById("fl-origin").value.trim();
   const destination = document.getElementById("fl-dest").value.trim();
   if (!origin || !destination) { alert("Origin and destination are required."); return; }
@@ -5140,7 +5180,10 @@ function addLane() {
   const rateBasis = document.getElementById("fl-basis").value;
   const rate = parseFloat(document.getElementById("fl-rate").value) || 0;
   const notes = document.getElementById("fl-notes").value.trim();
-  freightLanes.push({ id: "FL" + (laneSeq++), origin, destination, carrierId, rateBasis, rate, notes });
+  try {
+    const row = await apiFetch("/lanes", { method: "POST", body: JSON.stringify({ origin, destination, carrierId, rateBasis, rate, notes }) });
+    freightLanes.push(mapApiLane(row));
+  } catch (err) { alert("Couldn't add lane: " + err.message); return; }
   render();
 }
 let ftSelectedTicketId = null;
@@ -5183,11 +5226,11 @@ function viewFreightTicketsTab() {
             : f.capitalizedAmount > 0 ? `<span class="badge completed" title="Added ${fmtMoney(f.capitalizedAmount)} to ${commodityName(st.commodity)}'s avg cost at ${yardName(st.yard)}">+${fmtMoney(f.capitalizedAmount)} capitalized</span>`
             : `<span class="badge low" title="${f.capitalizedNote || ''}">Not yet capitalized</span>`;
           return `<tr>
-          <td>${f.id}</td><td>${f.ticketId}</td><td>${f.carrierId ? findCarrier(f.carrierId)?.name : "—"}</td><td>${f.origin} → ${f.destination}</td>
+          <td title="${htmlEsc(f.id)}">${shortId(f.id)}</td><td>${ticketLink(f.ticketId)}</td><td>${f.carrierId ? htmlEsc(findCarrier(f.carrierId)?.name || "—") : "—"}</td><td>${htmlEsc(f.origin)} → ${htmlEsc(f.destination)}</td>
           <td class="num">${fmtMoney(f.cost)}</td><td><span class="badge ${f.status==='Reconciled'?'completed':'low'}">${f.status}</span></td><td>${f.date}</td>
-          <td>${f.status !== "Reconciled" ? "—" : f.paid ? `<span class="badge completed">Paid</span>` : f.carrierId ? `<span class="badge low">Unpaid</span>` : `<span class="badge tier-scale">No carrier</span>`}</td>
+          <td>${f.status !== "Reconciled" ? "—" : f.paid ? `<span class="badge paid">Paid</span>` : f.carrierId ? `<span class="badge closed">Unpaid</span>` : `<span class="badge tier-scale">No carrier</span>`}</td>
           <td>${impact}</td>
-          <td>${f.status === "Estimated" ? `<button class="btn ghost" onclick="reconcileFreight('${f.id}')">Reconcile</button>` : f.status === "Reconciled" && !f.paid && f.carrierId ? `<button class="btn ghost" onclick="startPayFreight('${f.id}')">Pay</button>` : ""}</td>
+          <td style="display:flex; gap:6px; flex-wrap:wrap;">${f.status === "Estimated" ? `<button class="btn ghost" onclick="reconcileFreight('${f.id}')">Reconcile</button>` : ""}${f.status === "Reconciled" && !f.paid && f.carrierId && can("payRemittances") ? `<button class="btn ghost" onclick="startPayFreight('${f.id}')">Pay</button>` : ""}${!f.paid && can("voidTickets") ? `<button class="btn ghost" onclick="voidFreightApi('${f.id}')">Void</button>` : ""}</td>
         </tr>`; }).join("") || `<tr><td colspan="10" class="empty">No freight tickets yet.</td></tr>`}</tbody>
       </table>
       <div class="footnote">Paying a freight ticket here cuts its own remittance straight to the carrier, the same as combining it into a bigger payment from Reports → Payables — it'll show up in both places afterward, and in the Cashier's Checks panel if paid by check. Inbound freight's inventory impact is also visible as a "Freight Capitalized" line on that commodity's own Inventory ledger.</div>
@@ -5221,18 +5264,26 @@ function viewPayFreightPanel() {
     </div>
   `;
 }
-function confirmPayFreight() {
+// Pays one or more freight tickets to a carrier through the same check engine as dealer tickets.
+async function payFreightLines(carrier, freightIds, method, checkNumber, account) {
+  const row = await apiFetch("/remittances", { method: "POST", body: JSON.stringify({ payee: carrier.name, method, checkNumber: checkNumber || undefined, account, date: CURRENT_DATE, freightIds }) });
+  const rec = mapApiRemittance(row);
+  freightIds.forEach(id => { const f = freightTickets.find(x => x.id === id); if (f) { f.paid = true; f.remittanceId = rec.id; } });
+  const acct = findBankAccount(account);
+  if (acct && rec.checkNumber && /^\d+$/.test(rec.checkNumber)) acct.nextCheckNumber = Math.max(acct.nextCheckNumber || 0, parseInt(rec.checkNumber, 10) + 1);
+  remittances.push(rec);
+  return rec;
+}
+async function confirmPayFreight() {
   const f = freightTickets.find(x => x.id === payingFreightId);
   if (!f) return;
   const carrier = findCarrier(f.carrierId);
   if (!carrier) { alert("This freight ticket has no carrier attached — attach one before paying it."); return; }
   const method = document.getElementById("pf-method").value;
-  const checkNumInput = document.getElementById("pf-checknum");
+  const checkNumber = (document.getElementById("pf-checknum")?.value || "").trim();
   const account = document.getElementById("pf-account").value;
-  const id = "RM-" + (remittanceSeq++);
-  const checkNumber = method === "Check" ? ((checkNumInput && checkNumInput.value.trim()) || String(10000 + remittanceSeq)) : null;
-  f.paid = true; f.remittanceId = id;
-  remittances.push({ id, payee: carrier.name, method, checkNumber, account, date: CURRENT_DATE, lines: [{ kind: "freight", id: f.id, amount: f.cost }], total: f.cost, emailed: false, printed: false, checkPrinted: false, voided: false, cleared: false, clearedDate: null });
+  try { await payFreightLines(carrier, [f.id], method, checkNumber, account); }
+  catch (err) { alert("Couldn't pay: " + err.message); return; }
   payingFreightId = null;
   render();
 }
@@ -5261,16 +5312,31 @@ function attachFreight(placeholder) {
   ftSelectedTicketId = null;
   render();
 }
-function reconcileFreight(id) {
+async function reconcileFreight(id) {
   const f = freightTickets.find(f => f.id === id);
-  const val = prompt(`Actual freight cost from the carrier for ${f.id} (was a $0.01 placeholder):`, "");
+  const val = prompt(`Actual freight cost from the carrier for ${f.ticketId}'s load (was ${fmtMoney(f.cost)}${f.status === "Estimated" ? " placeholder" : ""}):`, "");
   if (val === null) return;
   const cost = parseFloat(val);
   if (isNaN(cost) || cost <= 0) { alert("Enter a valid dollar amount."); return; }
-  f.cost = r2(cost); f.status = "Reconciled";
-  capitalizeInboundFreight(f.id);
+  try {
+    const res = await apiFetch(`/freight/${encodeURIComponent(id)}/reconcile`, { method: "POST", body: JSON.stringify({ cost: r2(cost) }) });
+    await absorbFreightResult(res);
+  } catch (err) { alert("Couldn't reconcile: " + err.message); }
   render();
 }
+async function voidFreightApi(id) {
+  const f = freightTickets.find(f => f.id === id); if (!f) return;
+  if (f.paid) { alert("This freight has been paid — void its remittance first."); return; }
+  const reason = prompt(`Void freight on ${f.ticketId} (${fmtMoney(f.cost)})? Any cost already added to inventory comes back out.\n\nReason:`);
+  if (reason === null) return;
+  if (!reason.trim()) { alert("A reason is required."); return; }
+  try {
+    const res = await apiFetch(`/freight/${encodeURIComponent(id)}/void`, { method: "POST", body: JSON.stringify({ reason: reason.trim() }) });
+    await absorbFreightResult(res);
+  } catch (err) { alert("Couldn't void: " + err.message); }
+  render();
+}
+function shortId(id) { return id && id.length > 12 ? id.slice(0, 8) : id; }
 
 /* ---------------- Carriers (master list) ---------------- */
 let newCarrierOpen = false;
@@ -5285,20 +5351,16 @@ function recalcFreightRemitTotal() {
   let total = 0; boxes.forEach(b => total += parseFloat(b.dataset.amount));
   const el = document.getElementById("frm-total"); if (el) el.textContent = fmtMoney(total);
 }
-function createFreightRemittance() {
+async function createFreightRemittance() {
   const carrier = findCarrier(freightRemitCarrierId);
   if (!carrier) { alert("Pick a carrier first."); return; }
   const boxes = [...document.querySelectorAll(".frm-line:checked")];
   if (!boxes.length) { alert("Select at least one load to include in this payment."); return; }
   const method = document.getElementById("frm-method").value;
-  const checkNumInput = document.getElementById("frm-checknum");
+  const checkNumber = (document.getElementById("frm-checknum")?.value || "").trim();
   const account = document.getElementById("frm-account").value;
-  const lines = boxes.map(b => ({ kind: "freight", id: b.value, amount: parseFloat(b.dataset.amount) }));
-  const total = r2(lines.reduce((s, l) => s + l.amount, 0));
-  const id = "RM-" + (remittanceSeq++);
-  const checkNumber = method === "Check" ? ((checkNumInput && checkNumInput.value.trim()) || String(10000 + remittanceSeq)) : null;
-  lines.forEach(l => { const f = freightTickets.find(x => x.id === l.id); if (f) { f.paid = true; f.remittanceId = id; } });
-  remittances.push({ id, payee: carrier.name, method, checkNumber, account, date: CURRENT_DATE, lines, total, emailed: false, printed: false, checkPrinted: false, voided: false, cleared: false, clearedDate: null });
+  try { await payFreightLines(carrier, boxes.map(b => b.value), method, checkNumber, account); }
+  catch (err) { alert("Couldn't create remittance: " + err.message); return; }
   freightRemitCarrierId = null;
   render();
 }
@@ -5315,7 +5377,7 @@ function viewFreightRemitPanel() {
       ${loads.length ? `
       <div class="footnote" style="margin-bottom:10px;">${loads.length} unpaid, reconciled load${loads.length === 1 ? "" : "s"} ready to pay — uncheck any that shouldn't be part of this run.</div>
       <table><thead><tr><th></th><th>Freight #</th><th>Scale Ticket</th><th>Route</th><th>Date</th><th class="num">Cost</th></tr></thead>
-      <tbody>${loads.map(f => `<tr><td><input type="checkbox" class="frm-line" value="${f.id}" data-amount="${f.cost}" checked onchange="recalcFreightRemitTotal()" /></td><td>${f.id}</td><td>${f.ticketId}</td><td>${f.origin} → ${f.destination}</td><td>${f.date}</td><td class="num">${fmtMoney(f.cost)}</td></tr>`).join("")}</tbody></table>
+      <tbody>${loads.map(f => `<tr><td><input type="checkbox" class="frm-line" value="${f.id}" data-amount="${f.cost}" checked onchange="recalcFreightRemitTotal()" /></td><td title="${htmlEsc(f.id)}">${shortId(f.id)}</td><td>${ticketLink(f.ticketId)}</td><td>${htmlEsc(f.origin)} → ${htmlEsc(f.destination)}</td><td>${f.date}</td><td class="num">${fmtMoney(f.cost)}</td></tr>`).join("")}</tbody></table>
       <div class="form-grid cols4" style="margin-top:10px;">
         <div><label>Method</label><select id="frm-method"><option>Check</option><option>ACH</option></select></div>
         <div><label>Check # (optional)</label><input id="frm-checknum" placeholder="auto-assigned if blank" /></div>
@@ -5360,14 +5422,17 @@ function viewCarriers() {
     ${freightRemitCarrierId ? viewFreightRemitPanel() : ""}
   `;
 }
-function addCarrier() {
+async function addCarrier() {
   const name = document.getElementById("ncr-name").value.trim();
   if (!name) { alert("Name is required."); return; }
   const phone = document.getElementById("ncr-phone").value.trim();
   const mc = document.getElementById("ncr-mc").value.trim();
   const type = document.getElementById("ncr-type").value;
   const isContainerTruck = type === "owned" && document.getElementById("ncr-boxtruck").checked;
-  carriers.push({ id: "cr" + (carrierSeq++), name, phone, mc, notes: "", created: CURRENT_DATE, type, isContainerTruck });
+  try {
+    const row = await apiFetch("/carriers", { method: "POST", body: JSON.stringify({ name, phone, mc, type, isContainerTruck }) });
+    carriers.push(mapApiCarrier(row));
+  } catch (err) { alert("Couldn't add carrier: " + err.message); return; }
   newCarrierOpen = false; render();
 }
 
@@ -6495,27 +6560,20 @@ async function createRemittance() {
   if (!boxes.length) { alert("Select at least one line to include in this payment."); return; }
   const lines = boxes.map(b => { const [kind, id] = b.value.split(":"); return { kind, id, amount: parseFloat(b.dataset.amount) }; });
   const ticketIds = lines.filter(l => l.kind === "ticket").map(l => l.id);
-  const freightLines = lines.filter(l => l.kind === "freight");
+  const freightIds = lines.filter(l => l.kind === "freight").map(l => l.id);
   const checkNumber = (checkNumInput && checkNumInput.value.trim()) || undefined;
-  let rec;
-  if (ticketIds.length) {
-    try {
-      const row = await apiFetch("/remittances", { method: "POST", body: JSON.stringify({ payee: remittancePayee, method, checkNumber, account, date: CURRENT_DATE, ticketIds }) });
-      rec = mapApiRemittance(row);
-      ticketIds.forEach(id => { const t = tickets.find(x => x.id === id); if (t) { t.paid = true; t.remittanceId = rec.id; t.status = "Closed"; } });
-      const acct = findBankAccount(account);
-      if (acct && rec.checkNumber && /^\d+$/.test(rec.checkNumber)) acct.nextCheckNumber = Math.max(acct.nextCheckNumber || 0, parseInt(rec.checkNumber, 10) + 1);
-    } catch (err) {
-      alert("Couldn't create remittance: " + err.message);
-      return;
-    }
-  } else {
-    // Freight-only: nothing to save on the server yet.
-    rec = { id: "RM-" + (remittanceSeq++), payee: remittancePayee, method, checkNumber: method === "Check" ? (checkNumber || null) : null, account, date: CURRENT_DATE, lines: [], total: 0, emailed: false, printed: false, checkPrinted: false, voided: false, cleared: false, clearedDate: null, localOnly: true };
+  try {
+    const row = await apiFetch("/remittances", { method: "POST", body: JSON.stringify({ payee: remittancePayee, method, checkNumber, account, date: CURRENT_DATE, ticketIds, freightIds }) });
+    const rec = mapApiRemittance(row);
+    ticketIds.forEach(id => { const t = tickets.find(x => x.id === id); if (t) { t.paid = true; t.remittanceId = rec.id; t.status = "Closed"; } });
+    freightIds.forEach(id => { const f = freightTickets.find(x => x.id === id); if (f) { f.paid = true; f.remittanceId = rec.id; } });
+    const acct = findBankAccount(account);
+    if (acct && rec.checkNumber && /^\d+$/.test(rec.checkNumber)) acct.nextCheckNumber = Math.max(acct.nextCheckNumber || 0, parseInt(rec.checkNumber, 10) + 1);
+    remittances.push(rec);
+  } catch (err) {
+    alert("Couldn't create remittance: " + err.message);
+    return;
   }
-  freightLines.forEach(l => { const f = freightTickets.find(x => x.id === l.id); if (f) { f.paid = true; f.remittanceId = rec.id; } rec.lines.push(l); });
-  rec.total = r2(rec.lines.reduce((s, l) => s + l.amount, 0));
-  remittances.push(rec);
   remittancePayee = "";
   render();
 }

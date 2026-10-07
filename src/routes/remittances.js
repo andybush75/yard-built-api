@@ -39,12 +39,12 @@ router.get("/:id", requireAuth, async (req, res) => {
 // AP remittance run: one check/ACH covering one or more closed-but-unpaid buy tickets for a payee.
 // Cutting a check is the cashier/AP job (payRemittances), not something a scale operator can do.
 router.post("/", requireAuth, requirePermission("payRemittances"), async (req, res) => {
-  const { payee, method, checkNumber, account, date, ticketIds } = req.body || {};
+  const { payee, method, checkNumber, account, date, ticketIds, freightIds } = req.body || {};
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     const remittance = await createRemittance(client, {
-      payee, method, checkNumber, account, date, ticketIds, userId: req.user.id, source: "ap_run",
+      payee, method, checkNumber, account, date, ticketIds: ticketIds || [], freightIds: freightIds || [], userId: req.user.id, source: "ap_run",
     });
     await client.query("COMMIT");
     res.status(201).json(remittance);
@@ -100,7 +100,15 @@ router.post("/:id/void", requireAuth, requirePermission("payRemittances"), async
     for (const t of tickets) {
       await logAudit(client, { userId: req.user.id, action: "ticket.unpay", entity: "ticket", entityId: t.id, details: { remittanceId: req.params.id, reason: reason || null } });
     }
-    await logAudit(client, { userId: req.user.id, action: "remittance.void", entity: "remittance", entityId: req.params.id, details: { reason: reason || null, ticketIds: tickets.map((t) => t.id) } });
+    const { rows: freights } = await client.query(
+      "UPDATE freight_tickets SET paid = false, remittance_id = NULL WHERE remittance_id = $1 RETURNING id, ticket_id",
+      [req.params.id]
+    );
+    for (const f of freights) {
+      await logAudit(client, { userId: req.user.id, action: "freight.unpay", entity: "freight", entityId: f.id, details: { remittanceId: req.params.id, reason: reason || null } });
+      await logAudit(client, { userId: req.user.id, action: "ticket.freight_unpay", entity: "ticket", entityId: f.ticket_id, details: { freightId: f.id, remittanceId: req.params.id, reason: reason || null } });
+    }
+    await logAudit(client, { userId: req.user.id, action: "remittance.void", entity: "remittance", entityId: req.params.id, details: { reason: reason || null, ticketIds: tickets.map((t) => t.id), freightIds: freights.map((f) => f.id) } });
     await client.query("COMMIT");
     res.json(rows[0]);
   } catch (err) {

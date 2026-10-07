@@ -66,6 +66,11 @@ router.get("/:id", requireAuth, async (req, res) => {
     const { rows: rem } = await query("SELECT * FROM remittances WHERE id = $1", [ticket.remittance_id]);
     remittance = rem[0] || null;
   }
+  const { rows: freight } = await query(
+    `SELECT f.*, c.name AS carrier_name FROM freight_tickets f LEFT JOIN carriers c ON c.id = f.carrier_id
+     WHERE f.ticket_id = $1 AND f.voided_at IS NULL`,
+    [req.params.id]
+  );
   const { rows: timeline } = await query(
     `SELECT a.id, a.action, a.details, a.created_at, u.name AS user_name
      FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
@@ -73,7 +78,7 @@ router.get("/:id", requireAuth, async (req, res) => {
      ORDER BY a.created_at`,
     [req.params.id]
   );
-  res.json({ ...ticket, remittance, timeline });
+  res.json({ ...ticket, remittance, freight: freight[0] || null, timeline });
 });
 
 function nowTimeLabel() {
