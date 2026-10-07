@@ -19,11 +19,12 @@ async function requireAuth(req, res, next) {
   try {
     const payload = jwt.verify(token, JWT_SECRET);
     const { rows } = await query(
-      `SELECT u.id, u.name, u.email, u.role_id, u.grants, u.revokes, r.name AS role_name, r.permissions AS role_permissions
+      `SELECT u.id, u.name, u.email, u.role_id, u.grants, u.revokes, u.active, r.name AS role_name, r.permissions AS role_permissions
        FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`,
       [payload.sub]
     );
     if (!rows.length) return res.status(401).json({ error: "User no longer exists" });
+    if (!rows[0].active) return res.status(401).json({ error: "This account has been deactivated" });
     req.user = rows[0];
     next();
   } catch (err) {

@@ -66,7 +66,12 @@ All routes except `/health` and `/auth/login` require `Authorization: Bearer <to
 `POST /auth/login`. Routes marked with a permission key return 403 unless the user's role (or an
 individual grant) includes it; everything else is open to any logged-in user.
 
-- `POST /auth/login`, `GET /auth/me`
+- `POST /auth/login`, `GET /auth/me`, `POST /auth/change-password` (own password; needs the current one)
+- `GET /users` (any user — the directory), `POST/PATCH /users` — writes need `manageUsers`. Users are
+  deactivated (`active: false`), never deleted. You can't change your own access, and no change may
+  leave zero active users with `manageUsers`.
+- `GET /roles`, `POST/PATCH/DELETE /roles` — writes need `manageUsers`; built-in roles can't be
+  edited or deleted; a role with users on it can't be deleted.
 - `GET/POST/PATCH /commodities` — POST needs `addCommodity`, PATCH needs `editPricing`
 - `GET/POST/PATCH /vendors`, `/customers`
 - `GET/POST /carriers`

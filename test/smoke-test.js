@@ -136,6 +136,61 @@ async function main() {
   });
   assert(opTicket.status === 201, "scale operator can still post a ticket");
 
+  // ---- User & role management ----
+  const rolesList = await req("GET", "/roles", { token: opToken });
+  assert(rolesList.status === 200 && rolesList.body.some((r) => r.name === "Admin"), "any user can read the role list");
+  const cashierRole = rolesList.body.find((r) => r.name === "Cashier");
+  const adminRole = rolesList.body.find((r) => r.name === "Admin");
+
+  const opAdd = await req("POST", "/users", { token: opToken, body: { name: "x", email: "x@example.com", password: "password123", roleId: cashierRole.id } });
+  assert(opAdd.status === 403, "scale operator is denied creating a user (403)");
+
+  const stamp = Date.now();
+  const newUser = await req("POST", "/users", { token, body: { name: "Smoke Cashier", email: `smoke.cashier.${stamp}@example.com`, password: "temp-pass-123", roleId: cashierRole.id } });
+  assert(newUser.status === 201 && newUser.body.role_name === "Cashier" && newUser.body.password_hash === undefined, "admin can create a user; password hash is never returned");
+  const shortPw = await req("POST", "/users", { token, body: { name: "y", email: `y.${stamp}@example.com`, password: "short", roleId: cashierRole.id } });
+  assert(shortPw.status === 400, "a password under 8 characters is rejected");
+  const dupeEmail = await req("POST", "/users", { token, body: { name: "Smoke Cashier", email: `smoke.cashier.${stamp}@example.com`, password: "temp-pass-123", roleId: cashierRole.id } });
+  assert(dupeEmail.status === 409, "duplicate email is rejected with 409");
+
+  const newLogin = await req("POST", "/auth/login", { body: { email: `SMOKE.CASHIER.${stamp}@example.com`, password: "temp-pass-123" } });
+  assert(newLogin.status === 200 && newLogin.body.user.role === "Cashier", "new user can log in (email case-insensitive)");
+  const badChange = await req("POST", "/auth/change-password", { token: newLogin.body.token, body: { currentPassword: "wrong", newPassword: "another-pass-123" } });
+  assert(badChange.status === 401, "changing password with the wrong current password is rejected");
+  const goodChange = await req("POST", "/auth/change-password", { token: newLogin.body.token, body: { currentPassword: "temp-pass-123", newPassword: "another-pass-123" } });
+  assert(goodChange.status === 200, "user can change their own password");
+  const reLogin = await req("POST", "/auth/login", { body: { email: `smoke.cashier.${stamp}@example.com`, password: "another-pass-123" } });
+  assert(reLogin.status === 200, "new password works for login");
+
+  const grant = await req("PATCH", `/users/${newUser.body.id}`, { token, body: { grants: ["editPricing"] } });
+  assert(grant.status === 200 && grant.body.grants.includes("editPricing"), "admin can grant an individual permission");
+  const badKey = await req("PATCH", `/users/${newUser.body.id}`, { token, body: { grants: ["notAPermission"] } });
+  assert(badKey.status === 400, "an unknown permission key is rejected");
+  const selfChange = await req("PATCH", `/users/${me.body.id}`, { token, body: { roleId: cashierRole.id } });
+  assert(selfChange.status === 400, "you can't change your own role");
+  const deact = await req("PATCH", `/users/${newUser.body.id}`, { token, body: { active: false } });
+  assert(deact.status === 200 && deact.body.active === false, "admin can deactivate a user");
+  const deactLogin = await req("POST", "/auth/login", { body: { email: `smoke.cashier.${stamp}@example.com`, password: "another-pass-123" } });
+  assert(deactLogin.status === 401, "a deactivated user can't log in");
+  const deactToken = await req("GET", "/auth/me", { token: reLogin.body.token });
+  assert(deactToken.status === 401, "a deactivated user's existing token stops working");
+
+  const newRole = await req("POST", "/roles", { token, body: { name: `Smoke Role ${stamp}`, permissions: ["packInventory"] } });
+  assert(newRole.status === 201 && newRole.body.system === false, "admin can create a custom role");
+  const editRole = await req("PATCH", `/roles/${newRole.body.id}`, { token, body: { permissions: ["packInventory", "voidTickets"] } });
+  assert(editRole.status === 200 && editRole.body.permissions.length === 2, "custom role permissions can be changed");
+  const editSystem = await req("PATCH", `/roles/${adminRole.id}`, { token, body: { permissions: [] } });
+  assert(editSystem.status === 400, "built-in role permissions can't be changed");
+  const delSystem = await req("DELETE", `/roles/${adminRole.id}`, { token });
+  assert(delSystem.status === 400, "built-in roles can't be deleted");
+  const assignRole = await req("PATCH", `/users/${newUser.body.id}`, { token, body: { roleId: newRole.body.id } });
+  assert(assignRole.status === 200, "user can be moved onto the custom role");
+  const delInUse = await req("DELETE", `/roles/${newRole.body.id}`, { token });
+  assert(delInUse.status === 409, "a role with users on it can't be deleted");
+  await req("PATCH", `/users/${newUser.body.id}`, { token, body: { roleId: cashierRole.id } });
+  const delRole = await req("DELETE", `/roles/${newRole.body.id}`, { token });
+  assert(delRole.status === 204, "an unused custom role can be deleted");
+
   console.log("\nALL SMOKE TESTS PASSED");
 }
 
