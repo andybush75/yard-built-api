@@ -158,6 +158,41 @@
   .badge.tier-d2 { background: rgba(42,120,214,.14); color: var(--series-1); }
   .badge.tier-d1 { background: rgba(237,161,0,.16); color: #96650a; }
   .badge.tier-dh { background: rgba(12,163,12,.15); color: var(--good); }
+  /* Ticket status — the same four words everywhere a ticket appears */
+  .badge.held { background: rgba(250,178,25,.18); color: #96650a; }
+  .badge.closed { background: rgba(137,135,129,.16); color: var(--text-secondary); }
+  .badge.paid { background: rgba(12,163,12,.14); color: var(--good); }
+  .badge.voided { background: rgba(208,59,59,.12); color: var(--critical); text-decoration: line-through; }
+  .ticket-link { cursor:pointer; color: var(--series-1); font-weight:600; text-decoration: underline dotted; }
+  /* Global search (top bar) */
+  .gsearch { position:relative; }
+  .gsearch input { width:290px; font-size:12.5px; border:1px solid var(--border); padding:6px 10px 6px 30px; border-radius:8px; background: var(--surface-1); font-family:inherit; color: var(--text-primary); }
+  .gsearch svg { position:absolute; left:9px; top:8px; width:15px; height:15px; color: var(--text-muted); pointer-events:none; }
+  .gsearch-results { display:none; position:absolute; top:36px; left:0; width:440px; max-height:460px; overflow-y:auto; background:var(--surface-1); border:1px solid var(--border); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.16); z-index:60; }
+  .gsearch-results.open { display:block; }
+  .gs-group { padding:8px 12px 3px; font-size:10.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color: var(--text-muted); }
+  .gs-item { padding:7px 12px; cursor:pointer; font-size:12px; display:flex; justify-content:space-between; gap:10px; align-items:center; }
+  .gs-item:hover, .gs-item.active { background: rgba(42,120,214,.08); }
+  .gs-item .gs-sub { color: var(--text-secondary); font-size:11px; }
+  .gs-empty { padding:12px; font-size:12px; color: var(--text-secondary); }
+  /* Ticket page */
+  .ticket-head { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+  .ticket-head h2 { margin:0; font-size:18px; }
+  .ticket-actions { display:flex; gap:8px; flex-wrap:wrap; margin-left:auto; }
+  .ticket-facts { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:10px 18px; }
+  .ticket-facts .label { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color: var(--text-muted); }
+  .ticket-facts .value { font-size:13.5px; font-weight:600; margin-top:2px; }
+  .money-strip { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12.5px; margin: 6px 0 2px; }
+  .money-strip .step { padding:4px 10px; border-radius:999px; border:1px solid var(--border); color: var(--text-secondary); }
+  .money-strip .step.done { background: rgba(12,163,12,.12); color: var(--good); border-color: transparent; font-weight:700; }
+  .money-strip .step.now { background: rgba(250,178,25,.18); color:#96650a; border-color: transparent; font-weight:700; }
+  .money-strip .arrow { color: var(--text-muted); }
+  .timeline { list-style:none; margin:0; padding:0; }
+  .timeline li { display:grid; grid-template-columns: 150px 1fr; gap:12px; padding:8px 0; border-bottom:1px solid var(--border); font-size:12.5px; }
+  .timeline li:last-child { border-bottom:none; }
+  .timeline .when { color: var(--text-secondary); font-size:11.5px; }
+  .timeline .what b { font-weight:700; }
+  .timeline .what .footnote { margin:2px 0 0; }
   .form-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 14px; }
   .form-grid.cols4 { grid-template-columns: repeat(4,1fr); }
   label { display:block; font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
@@ -326,6 +361,12 @@
     <div class="topbar">
       <h1 id="pagetitle">Dashboard</h1>
       <div class="topbar-right">
+        <div class="gsearch">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="gsearch" type="search" placeholder="Find a ticket, dealer, check, amount…" autocomplete="off"
+                 oninput="onGlobalSearch(this.value)" onkeydown="onGlobalSearchKey(event)" onfocus="if(this.value.trim().length>=2) onGlobalSearch(this.value)" />
+          <div class="gsearch-results" id="gsearch-results"></div>
+        </div>
         <div class="yardsel"><select id="yardpick" onchange="setYard(this.value)"></select></div>
         <div class="bell" onclick="currentRoute='dashboard'; render(); setTimeout(()=>document.getElementById('alertspanel')?.scrollIntoView({behavior:'smooth'}),50);" title="Alerts">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 10a6 6 0 0 1 12 0c0 4 1.5 5.5 1.5 5.5H4.5S6 14 6 10Z"/><path d="M10 18.5a2 2 0 0 0 4 0"/></svg>
@@ -1164,16 +1205,48 @@ function mapApiCommodity(c) {
     kiosk: { show: !!c.kiosk_show, color: c.kiosk_color }, askPrice: !!c.ask_price,
   };
 }
+function isoDay(v) { return v ? String(v).slice(0, 10) : null; }
 function mapApiTicket(t) {
   return {
-    id: t.id, type: t.type, date: t.date, yard: t.yard,
+    id: t.id, type: t.type, date: isoDay(t.date), yard: t.yard,
     party: t.party_name, partyId: t.vendor_id || t.customer_id || null,
     commodity: t.commodity, tier: t.tier, netWeight: parseFloat(t.net_weight), price: parseFloat(t.price),
     total: parseFloat(t.total), payment: t.payment, synced: !!t.synced, paid: !!t.paid,
     remittanceId: t.remittance_id, status: t.status, cogsPerLb: t.cogs_per_lb != null ? parseFloat(t.cogs_per_lb) : null,
     contractId: t.contract_id, poId: t.po_id, shipmentId: t.shipment_id, holdDescription: t.hold_desc,
+    createdAt: t.created_at || null, closedAt: t.closed_at || null, voidedAt: t.voided_at || null, voidReason: t.void_reason || null,
   };
 }
+function mapApiRemittance(r) {
+  return {
+    id: r.id, payee: r.payee, method: r.method, checkNumber: r.check_number || null, account: r.account, date: isoDay(r.date),
+    lines: (r.lines || []).map(l => ({ kind: l.kind, id: l.ref_id, amount: parseFloat(l.amount) })),
+    total: parseFloat(r.total), emailed: !!r.emailed, printed: !!r.printed, checkPrinted: !!r.check_printed,
+    voided: !!r.voided, cleared: !!r.cleared, clearedDate: isoDay(r.cleared_date), voidReason: r.void_reason || null,
+  };
+}
+function mapApiBankAccount(b) {
+  return { yard: b.yard, bankName: b.bank_name, last4: b.last4, startingBalance: parseFloat(b.starting_balance) || 0, nextCheckNumber: b.next_check_number };
+}
+function htmlEsc(s) { return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+function fmtWhen(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  return isNaN(d) ? String(ts) : d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+// One status word per ticket, shown the same way everywhere: Held → Closed → Paid, or Voided.
+function ticketStatusBadge(t) {
+  if (t.status === "Voided") return `<span class="badge voided">Voided</span>`;
+  if (t.type === "buy") {
+    if (t.paid) return `<span class="badge paid">Paid</span>`;
+    if (t.status === "Held") return `<span class="badge held">Held</span>`;
+    if (t.status === "Pending Weight") return `<span class="badge held">Pending Weight</span>`;
+    return `<span class="badge closed">Closed · unpaid</span>`;
+  }
+  if (t.kind === "transfer") return `<span class="badge closed">Transfer</span>`;
+  return ticketBalanceDue(t) <= 0.005 ? `<span class="badge paid">Paid</span>` : `<span class="badge closed">Bal ${fmtMoney0(ticketBalanceDue(t))}</span>`;
+}
+function ticketLink(id) { return `<span class="ticket-link" onclick="openTicket('${htmlEsc(id)}')" title="Open ticket">${htmlEsc(id)}</span>`; }
 function mapApiVendor(v) {
   return {
     id: v.id, name: v.name, phone: v.phone || "", email: v.email || "", tier: v.tier, notes: v.notes || "",
@@ -1224,7 +1297,7 @@ async function patchParty(kind, id, fields) {
 // login. Any (yard, commodity) pair with no rows yet in inventory_balances is left at qty 0 /
 // avgCost = that commodity's master price, matching how the backend itself would start it.
 async function bootstrapFromApi() {
-  const [apiCommodities, balances, ledger, apiTickets, apiVendors, apiCustomers, apiUsers, apiRoles] = await Promise.all([
+  const [apiCommodities, balances, ledger, apiTickets, apiVendors, apiCustomers, apiUsers, apiRoles, apiRemittances, apiBankAccounts] = await Promise.all([
     apiFetch("/commodities"),
     apiFetch("/inventory/balances"),
     apiFetch("/inventory/ledger?limit=1000"),
@@ -1233,6 +1306,8 @@ async function bootstrapFromApi() {
     apiFetch("/customers"),
     apiFetch("/users"),
     apiFetch("/roles"),
+    apiFetch("/remittances?limit=1000"),
+    apiFetch("/bank-accounts"),
   ]);
 
   commodities = apiCommodities.map(mapApiCommodity);
@@ -1240,6 +1315,8 @@ async function bootstrapFromApi() {
   customers = apiCustomers.map(mapApiCustomer);
   users = apiUsers.map(mapApiUser);
   roles = apiRoles.map(mapApiRole);
+  remittances = apiRemittances.map(mapApiRemittance).reverse(); // API is newest-first; local convention appends oldest-first
+  if (apiBankAccounts.length) bankAccounts = apiBankAccounts.map(mapApiBankAccount);
 
   inventoryByYard = { SB: {}, HAYS: {}, COLBY: {}, RC: {} };
   YARDS.forEach(y => { commodities.forEach(c => { inventoryByYard[y.code][c.code] = { qty: 0, avgCost: c.masterPrice }; }); });
@@ -1567,14 +1644,29 @@ function bankAccountLabel(yard) { const b = findBankAccount(yard); return b ? `$
 function bankAccountOptionsHtml(selectedYard) {
   return YARDS.map(y => `<option value="${y.code}" ${y.code === selectedYard ? "selected" : ""}>${bankAccountLabel(y.code)}</option>`).join("");
 }
+async function patchBankAccount(yard, fields) {
+  const acct = findBankAccount(yard); if (!acct) return;
+  try {
+    const row = await apiFetch(`/bank-accounts/${encodeURIComponent(yard)}`, { method: "PATCH", body: JSON.stringify(fields) });
+    Object.assign(acct, mapApiBankAccount(row));
+  } catch (err) { alert("Couldn't save: " + err.message); }
+  render();
+}
 function editBankStartingBalance(yard) {
   const acct = findBankAccount(yard); if (!acct) return;
   const val = prompt(`Opening balance for ${bankAccountLabel(yard)} (the balance before any checks tracked in this register):`, acct.startingBalance);
   if (val === null) return;
   const n = parseFloat(val);
   if (isNaN(n)) { alert("Enter a valid dollar amount."); return; }
-  acct.startingBalance = r2(n);
-  render();
+  patchBankAccount(yard, { startingBalance: r2(n) });
+}
+function editNextCheckNumber(yard) {
+  const acct = findBankAccount(yard); if (!acct) return;
+  const val = prompt(`Next check number for ${bankAccountLabel(yard)} — the number on the next blank check in the drawer:`, acct.nextCheckNumber || "");
+  if (val === null) return;
+  const n = parseInt(val, 10);
+  if (isNaN(n) || n <= 0) { alert("Enter a whole number."); return; }
+  patchBankAccount(yard, { nextCheckNumber: n });
 }
 
 /* Payables — a Closed buy ticket or a Reconciled freight ticket is owed to a vendor/carrier until
@@ -2216,12 +2308,12 @@ function shipmentBadgeHtml(t) {
 }
 function renderTicketTable(list) {
   if (!list.length) return `<div class="empty">No tickets yet.</div>`;
-  return `<table><thead><tr><th>Ticket</th><th>Type</th><th>Yard</th><th>Date</th><th>Party</th><th>Commodity</th><th>Tier</th><th class="num">Net Wt</th><th class="num">Price</th><th class="num">Total</th><th>Freight</th><th>Pay</th><th>QB</th><th></th></tr></thead>
-    <tbody>${list.map(t => `<tr>
-      <td>${t.id}${shipmentBadgeHtml(t)}</td><td><span class="badge ${t.type}">${t.type === "buy" ? "Buy" : "Sell"}</span></td><td>${t.yard}</td><td>${t.date}</td><td>${t.party}${t.holdDescription ? `<div class="footnote" style="margin-top:2px;">${t.holdDescription}</div>` : ""}</td><td>${commodityName(t.commodity)}</td><td>${tierBadge(t.tier)}</td>
+  return `<table><thead><tr><th>Ticket</th><th>Type</th><th>Yard</th><th>Date</th><th>Party</th><th>Commodity</th><th>Tier</th><th class="num">Net Wt</th><th class="num">Price</th><th class="num">Total</th><th>Freight</th><th>Status</th><th>QB</th><th></th></tr></thead>
+    <tbody>${list.map(t => `<tr${t.status === "Voided" ? ' style="opacity:.55;"' : ""}>
+      <td>${ticketLink(t.id)}${shipmentBadgeHtml(t)}</td><td><span class="badge ${t.type}">${t.type === "buy" ? "Buy" : "Sell"}</span></td><td>${t.yard}</td><td>${t.date}</td><td>${t.party}${t.holdDescription ? `<div class="footnote" style="margin-top:2px;">${t.holdDescription}</div>` : ""}</td><td>${commodityName(t.commodity)}</td><td>${tierBadge(t.tier)}</td>
       <td class="num">${fmtQty(t.commodity,t.netWeight)}</td><td class="num">${fmtRate(t.commodity,t.price)}</td><td class="num">${fmtMoney(t.total)}</td>
       <td>${freightCellHtml(t.id)}</td>
-      <td>${t.type === "buy" ? (t.paid ? `<span class="badge completed">Paid</span>` : `<span class="badge low">Unpaid</span>`) : (t.kind === "transfer" ? "—" : (ticketBalanceDue(t) <= 0.005 ? `<span class="badge completed">Paid</span>` : `<span class="badge low">Bal ${fmtMoney0(ticketBalanceDue(t))}</span>`))}</td>
+      <td>${ticketStatusBadge(t)}</td>
       <td>${t.synced ? `<span class="badge completed">Synced</span>` : `<span class="badge scheduled">Pending</span>`}</td>
       <td style="display:flex; gap:6px; flex-wrap:wrap;"><button class="btn ghost" onclick="printScaleTicket('${t.id}')">Ticket</button>${t.type === "sell" && t.kind !== "transfer" ? `<button class="btn ghost" onclick="printSalesInvoice('${t.id}')">Invoice</button><button class="btn ghost" onclick="printPackingList('${t.id}')">Pack List</button><button class="btn ghost" onclick="printBillOfLading('${t.id}')">BOL</button>` : ""}</td>
     </tr>`).join("")}</tbody></table>`;
@@ -2644,7 +2736,7 @@ async function completeKioskTicket() {
     }
     await refreshInventoryFor(currentYard, [...new Set(lines.map(l => l.code))]);
     attachFreightFromKioskForm(newIds);
-    printScaleTickets(newIds);
+    // The scale ticket prints once, at the cashier (Pay / Pay Later) — not here (Andy, 2026-10-07).
     selectedPartyByPrefix['kiosk'] = "";
     holdDescByPrefix['kiosk'] = "";
   } catch (err) {
@@ -2675,38 +2767,109 @@ function attachFreightFromKioskForm(newTicketIds) {
    a future remittance batch — the right call for recurring dealers who don't need a check every visit.
    "Paid" cuts a one-line remittance for just this ticket right now, so a dealer who's getting paid on
    the spot doesn't have to wait for someone to run a batch remittance later. */
-function closeHeldTicket(id) {
-  const t = tickets.find(x => x.id === id);
-  if (!t) return;
-  t.status = "Closed";
-  render();
-  printScaleTicket(id);
+// Replaces a ticket in the local list with the server's version (after pay / pay later / void),
+// and refreshes the open ticket page if it's showing that ticket.
+function absorbTicket(apiTicket) {
+  const m = mapApiTicket(apiTicket);
+  const i = tickets.findIndex(x => x.id === m.id);
+  if (i >= 0) tickets[i] = { ...tickets[i], ...m }; else tickets.unshift(m);
+  return m;
 }
-function payHeldTicketNow(id) {
-  const t = tickets.find(x => x.id === id);
-  if (!t) return;
-  if (!t.partyId) { alert("This ticket doesn't have a dealer record on file yet, so there's no one to cut a check to — add them as a dealer first, or use Pay Later and settle it in a future remittance once they're identified."); return; }
-  t.status = "Closed";
-  const rmId = "RM-" + (remittanceSeq++);
-  const checkNumber = t.payment === "Check" ? String(10000 + remittanceSeq) : null;
-  t.paid = true;
-  t.remittanceId = rmId;
-  remittances.push({ id: rmId, payee: t.party, method: t.payment, checkNumber, account: t.yard, date: CURRENT_DATE, lines: [{ kind: "ticket", id: t.id, amount: t.total }], total: t.total, emailed: false, printed: false, checkPrinted: false, voided: false, cleared: false, clearedDate: null });
-  render();
-  printScaleTicket(id);
+// Which ticket has the Pay panel open (one at a time, on the cashier queue or the ticket page).
+let payOpenId = null;
+function nextCheckLabel(yard) { const a = findBankAccount(yard); return a && a.nextCheckNumber ? `next: #${a.nextCheckNumber}` : "auto"; }
+// The Pay panel: who, how, which check number, which account. The ID-scan / fingerprint
+// verification step will be added to this panel.
+function payPanelHtml(t) {
+  const walkIn = !t.partyId;
+  return `<div class="inlineform" id="pay-panel" style="margin:6px 0 10px;">
+    <div class="form-grid cols4">
+      ${walkIn
+        ? `<div><label>Pay to — walk-in, who is the check made out to?</label><input id="pay-payee" placeholder="Name exactly as it should print" /></div>`
+        : `<div><label>Pay to</label><input value="${htmlEsc(t.party)}" disabled /></div>`}
+      <div><label>Method</label><select id="pay-method"><option ${t.payment === "Check" ? "selected" : ""}>Check</option><option ${t.payment === "ACH" ? "selected" : ""}>ACH</option></select></div>
+      <div><label>Check # (blank = ${nextCheckLabel(t.yard)})</label><input id="pay-checknum" placeholder="auto" /></div>
+      <div><label>Pay from account</label><select id="pay-account">${bankAccountOptionsHtml(t.yard)}</select></div>
+      <div style="display:flex; align-items:flex-end; gap:8px;"><button class="btn" onclick="confirmPay('${t.id}')">Pay ${fmtMoney(t.total)}</button><button class="btn ghost" onclick="payOpenId=null; render();">Cancel</button></div>
+    </div>
+    <div class="footnote" style="margin-top:6px;">Closes the ticket, cuts the ${t.payment === "ACH" ? "ACH" : "check"}, and prints the scale ticket. ID scan and fingerprint verification will be added to this step.</div>
+  </div>`;
 }
+function openPayPanel(id) { payOpenId = id; render(); setTimeout(() => document.getElementById(payOpenId && !tickets.find(x => x.id === payOpenId)?.partyId ? "pay-payee" : "pay-checknum")?.focus(), 30); }
+async function confirmPay(id) {
+  const t = tickets.find(x => x.id === id); if (!t) return;
+  const payeeEl = document.getElementById("pay-payee");
+  const payee = payeeEl ? payeeEl.value.trim() : null;
+  if (payeeEl && !payee) { alert("Enter who the check is made out to."); payeeEl.focus(); return; }
+  const method = document.getElementById("pay-method").value;
+  const checkNumber = document.getElementById("pay-checknum").value.trim() || undefined;
+  const account = document.getElementById("pay-account").value;
+  const btn = document.querySelector("#pay-panel .btn"); if (btn) { btn.disabled = true; btn.textContent = "Paying…"; }
+  try {
+    const res = await apiFetch(`/tickets/${encodeURIComponent(id)}/pay`, { method: "POST", body: JSON.stringify({ method, checkNumber, account, payee: payee || undefined, date: CURRENT_DATE }) });
+    absorbTicket(res.ticket);
+    remittances.push(mapApiRemittance(res.remittance));
+    const acct = findBankAccount(account);
+    if (acct && res.remittance.check_number && /^\d+$/.test(res.remittance.check_number)) acct.nextCheckNumber = Math.max(acct.nextCheckNumber || 0, parseInt(res.remittance.check_number, 10) + 1);
+    payOpenId = null;
+    if (currentRoute === "ticket" && currentTicketId === id) await openTicket(id); else render();
+    printScaleTicket(id);
+  } catch (err) {
+    alert("Couldn't pay: " + err.message);
+    render();
+  }
+}
+async function payLater(id) {
+  const t = tickets.find(x => x.id === id); if (!t) return;
+  if (!t.partyId) { alert("Walk-ins can't be sent to AP — pay them here, or add them as a dealer first."); return; }
+  try {
+    const updated = await apiFetch(`/tickets/${encodeURIComponent(id)}/pay-later`, { method: "POST" });
+    absorbTicket(updated);
+    if (currentRoute === "ticket" && currentTicketId === id) await openTicket(id); else render();
+    printScaleTicket(id);
+  } catch (err) {
+    alert("Couldn't close ticket: " + err.message);
+  }
+}
+async function voidTicketApi(id) {
+  const t = tickets.find(x => x.id === id); if (!t) return;
+  if (t.paid) { alert("This ticket has been paid. Void its check first (Cashier → Check Register, or Reports → Payables), then void the ticket."); return; }
+  const reason = prompt(`Void ticket ${id} (${fmtMoney(t.total)} ${t.party})?\n\nThe material goes back out of inventory. Reason:`);
+  if (reason === null) return;
+  if (!reason.trim()) { alert("A reason is required."); return; }
+  try {
+    const updated = await apiFetch(`/tickets/${encodeURIComponent(id)}/void`, { method: "POST", body: JSON.stringify({ reason: reason.trim() }) });
+    absorbTicket(updated);
+    if (currentRoute === "ticket" && currentTicketId === id) await openTicket(id); else render();
+  } catch (err) {
+    alert("Couldn't void: " + err.message);
+  }
+}
+/* ---------------- Cashier — a queue, not a report ----------------
+   Buy tickets post as Held and land here. "Pay" cuts a one-line check/ACH for this ticket right
+   now (walk-ins: cashier types the payee). "Pay Later" closes it unpaid and sends it to AP for a
+   remittance run — dealers only, since walk-ins are excluded from AP. Either way the scale ticket
+   prints. Click the ticket number for the full ticket page. */
 function viewCashier() {
   if (isCorp()) {
     return `<div class="panel placeholder"><h3>Select a yard to use the Cashier</h3><p style="font-size:12.5px;">Corporate is a read-only rollup — held tickets are closed out at a specific yard. Switch yards from the top bar.</p></div>`;
   }
-  const held = tickets.filter(t => t.type === "buy" && t.yard === currentYard && t.status === "Held");
-  const closedRecent = tickets.filter(t => t.type === "buy" && t.yard === currentYard && t.status === "Closed").slice(-8).reverse();
+  const held = tickets.filter(t => t.type === "buy" && t.yard === currentYard && t.status === "Held").slice().sort((a, b) => (b.createdAt || b.date).localeCompare(a.createdAt || a.date));
+  const closedRecent = tickets.filter(t => t.type === "buy" && t.yard === currentYard && t.status !== "Held")
+    .sort((a, b) => (b.closedAt || b.createdAt || b.date).localeCompare(a.closedAt || a.createdAt || a.date)).slice(0, 8);
+  const canPay = can("payRemittances");
   return `
-    <div class="subtitle">Tickets held from Purchasing land here. Closing always prints the dealer's scale ticket — choose "Paid" to cut a one-line check/ACH for this ticket right now, or "Pay Later" to send it to AP as an unpaid payable for a future remittance run.</div>
+    <div class="subtitle">Tickets held from Purchasing wait here. <b>Pay</b> cuts the check or ACH for this ticket now. <b>Pay Later</b> sends it to AP unpaid for a remittance run (dealers only). Click a ticket number to see everything about it.</div>
     <div class="panel">
       <div class="panel-head"><h2>Held tickets — ${yardName(currentYard)} (${held.length})</h2></div>
-      ${held.length ? `<table><thead><tr><th>Ticket</th><th>Date</th><th>Party</th><th>Commodity</th><th class="num">Net Wt</th><th class="num">Total</th><th>Freight</th><th></th></tr></thead>
-      <tbody>${held.map(t => `<tr><td>${t.id}</td><td>${t.date}</td><td>${t.party}${t.holdDescription ? `<div class="footnote" style="margin-top:2px;">${t.holdDescription}</div>` : ""}</td><td>${commodityName(t.commodity)}</td><td class="num">${fmtQty(t.commodity, t.netWeight)}</td><td class="num">${fmtMoney(t.total)}</td><td>${freightCellHtml(t.id)}</td><td style="display:flex; gap:6px; flex-wrap:wrap;"><button class="btn small" onclick="payHeldTicketNow('${t.id}')">Paid</button><button class="btn ghost small" onclick="closeHeldTicket('${t.id}')">Pay Later</button></td></tr>`).join("")}</tbody></table>` : `<div class="empty">Nothing on hold — process a purchase from the Purchasing screen to see it here.</div>`}
+      ${!canPay ? `<div class="footnote" style="margin-bottom:8px;">You can see the queue, but paying or closing tickets needs the "Pay &amp; void remittances" permission.</div>` : ""}
+      ${held.length ? `<table><thead><tr><th>Ticket</th><th>When</th><th>Party</th><th>Commodity</th><th class="num">Net Wt</th><th class="num">Total</th><th>Freight</th><th></th></tr></thead>
+      <tbody>${held.map(t => `<tr>
+        <td>${ticketLink(t.id)}</td><td>${t.createdAt ? fmtWhen(t.createdAt) : t.date}</td>
+        <td>${htmlEsc(t.party)}${!t.partyId ? ` <span class="badge closed">Walk-in</span>` : ""}${t.holdDescription ? `<div class="footnote" style="margin-top:2px;">${htmlEsc(t.holdDescription)}</div>` : ""}</td>
+        <td>${commodityName(t.commodity)}</td><td class="num">${fmtQty(t.commodity, t.netWeight)}</td><td class="num"><b>${fmtMoney(t.total)}</b></td><td>${freightCellHtml(t.id)}</td>
+        <td style="display:flex; gap:6px; flex-wrap:wrap;">${canPay ? `<button class="btn small" onclick="openPayPanel('${t.id}')">Pay</button>${t.partyId ? `<button class="btn ghost small" onclick="payLater('${t.id}')">Pay Later</button>` : ""}` : ""}</td>
+      </tr>${payOpenId === t.id ? `<tr><td colspan="8">${payPanelHtml(t)}</td></tr>` : ""}`).join("")}</tbody></table>` : `<div class="empty">Nothing on hold — every purchase written at the scale shows up here until it's paid or sent to AP.</div>`}
     </div>
     <div class="panel"><h2 style="margin-bottom:12px;">Recently closed — ${yardName(currentYard)}</h2>
       ${renderTicketTable(closedRecent)}
@@ -2715,6 +2878,142 @@ function viewCashier() {
     ${viewCashierAgedPayables()}
   `;
 }
+
+/* ---------------- Ticket page — everything about one ticket, no tabs, no popups ---------------- */
+let currentTicketId = null, currentTicketDetail = null, ticketPageError = null;
+async function openTicket(id) {
+  currentTicketId = id; ticketPageError = null; currentRoute = "ticket";
+  hideGlobalSearch();
+  if (!currentTicketDetail || currentTicketDetail.id !== id) { currentTicketDetail = null; render(); }
+  try {
+    currentTicketDetail = await apiFetch(`/tickets/${encodeURIComponent(id)}`);
+    absorbTicket(currentTicketDetail);
+  } catch (err) {
+    ticketPageError = err.message;
+  }
+  render();
+}
+const TIMELINE_LABELS = {
+  "ticket.create": "Created",
+  "ticket.close": "Pay Later — sent to AP unpaid",
+  "ticket.pay": "Paid",
+  "ticket.unpay": "Payment voided — back to unpaid",
+  "ticket.void": "Voided",
+};
+function timelineDetail(e) {
+  const d = e.details || {};
+  switch (e.action) {
+    case "ticket.create": return `${d.type === "buy" ? "Buy" : "Sell"} · ${fmtMoney(d.total || 0)} · ${d.status || ""}`;
+    case "ticket.pay": return `${d.method || ""}${d.checkNumber ? ` #${d.checkNumber}` : ""} to ${htmlEsc(d.payee || "")} · ${fmtMoney(d.amount || 0)}${d.source === "cashier" ? " · at the cashier" : d.source === "ap_run" ? " · AP remittance run" : ""}`;
+    case "ticket.unpay": return d.reason ? `Reason: ${htmlEsc(d.reason)}` : "";
+    case "ticket.void": return `Reason: ${htmlEsc(d.reason || "")}`;
+    default: return "";
+  }
+}
+function viewTicketPage() {
+  if (ticketPageError) return `<div class="panel placeholder"><h3>Couldn't load ${htmlEsc(currentTicketId)}</h3><p style="font-size:12.5px;">${htmlEsc(ticketPageError)}</p><button class="btn ghost" onclick="openTicket('${htmlEsc(currentTicketId)}')">Try again</button></div>`;
+  const d = currentTicketDetail;
+  if (!d) return `<div class="panel placeholder"><h3>Loading ${htmlEsc(currentTicketId)}…</h3></div>`;
+  const t = mapApiTicket(d);
+  const local = tickets.find(x => x.id === t.id) || t;
+  const isBuy = t.type === "buy";
+  const voided = t.status === "Voided";
+  const canPay = can("payRemittances"), canVoid = can("voidTickets");
+  const rem = d.remittance;
+  const partyLabel = isBuy ? "Dealer" : "Customer";
+  const partyRoute = isBuy ? "vendors" : "customers";
+  // Money strip: Held → Closed → Paid (buys), or just Closed for sells.
+  const steps = voided
+    ? `<span class="step" style="color:var(--critical); font-weight:700;">Voided ${fmtWhen(t.voidedAt)}</span>`
+    : isBuy
+      ? `<span class="step done">Written ${fmtWhen(t.createdAt)}</span><span class="arrow">→</span>
+         <span class="step ${t.status === "Held" ? "now" : "done"}">${t.status === "Held" ? "Held at cashier" : `Closed ${fmtWhen(t.closedAt)}`}</span><span class="arrow">→</span>
+         <span class="step ${t.paid ? "done" : ""}">${t.paid ? `Paid${rem ? ` · ${rem.method}${rem.check_number ? ` #${rem.check_number}` : ""}` : ""}` : (t.status === "Held" ? "Not paid" : "Unpaid — waiting for AP")}</span>`
+      : `<span class="step done">Written ${fmtWhen(t.createdAt)}</span><span class="arrow">→</span><span class="step done">Closed</span>`;
+  const actions = [];
+  if (isBuy && !voided && !t.paid && canPay) actions.push(`<button class="btn" onclick="openPayPanel('${t.id}')">Pay</button>`);
+  if (isBuy && t.status === "Held" && t.partyId && canPay) actions.push(`<button class="btn ghost" onclick="payLater('${t.id}')">Pay Later</button>`);
+  actions.push(`<button class="btn ghost" onclick="printScaleTicket('${t.id}')">Print ticket</button>`);
+  if (!voided && canVoid) actions.push(t.paid
+    ? `<button class="btn ghost" title="Void its check first" onclick="voidTicketApi('${t.id}')">Void…</button>`
+    : `<button class="btn secondary" onclick="voidTicketApi('${t.id}')">Void ticket</button>`);
+  return `
+    <div class="panel">
+      <div class="ticket-head">
+        <h2>${htmlEsc(t.id)}</h2>
+        <span class="badge ${t.type}">${isBuy ? "Buy" : "Sell"}</span>
+        ${ticketStatusBadge(t)}
+        <span class="footnote" style="margin:0;">${yardName(t.yard)} · ${t.date}</span>
+        <div class="ticket-actions">${actions.join("")}</div>
+      </div>
+      ${payOpenId === t.id ? payPanelHtml(local) : ""}
+      <div class="money-strip">${steps}</div>
+      ${voided && t.voidReason ? `<div class="footnote" style="color:var(--critical);">Void reason: ${htmlEsc(t.voidReason)}</div>` : ""}
+    </div>
+    <div class="panel">
+      <div class="ticket-facts">
+        <div><div class="label">${partyLabel}</div><div class="value">${t.partyId ? `<span class="ticket-link" onclick="currentRoute='${partyRoute}'; render();">${htmlEsc(t.party)}</span>` : `${htmlEsc(t.party)} <span class="badge closed">Walk-in</span>`}${d.vendor_phone || d.customer_phone ? `<div class="footnote" style="margin:2px 0 0;">${htmlEsc(d.vendor_phone || d.customer_phone)}</div>` : ""}${t.holdDescription ? `<div class="footnote" style="margin:2px 0 0;">${htmlEsc(t.holdDescription)}</div>` : ""}</div></div>
+        <div><div class="label">Material</div><div class="value">${commodityName(t.commodity)}${t.tier ? ` ${tierBadge(t.tier)}` : ""}</div></div>
+        <div><div class="label">Net weight</div><div class="value">${fmtQty(t.commodity, t.netWeight)}</div></div>
+        <div><div class="label">Price</div><div class="value">${fmtRate(t.commodity, t.price)}</div></div>
+        <div><div class="label">Total</div><div class="value">${fmtMoney(t.total)}</div></div>
+        <div><div class="label">Payment</div><div class="value">${htmlEsc(t.payment)}</div></div>
+        <div><div class="label">Written by</div><div class="value">${htmlEsc(d.created_by_name || "—")}</div></div>
+        ${t.closedAt ? `<div><div class="label">Closed by</div><div class="value">${htmlEsc(d.closed_by_name || "—")}</div></div>` : ""}
+        ${rem ? `<div><div class="label">Paid on</div><div class="value">${rem.method}${rem.check_number ? ` #${rem.check_number}` : ""} · ${yardName(rem.account)} account${rem.voided ? ` <span class="badge voided">Voided</span>` : ""}<div class="footnote" style="margin:2px 0 0;">Remittance ${rem.id.slice(0, 8)}… · ${isoDay(rem.date)} · <span class="link" onclick="currentRoute='reports'; reportsTab='payables'; render();">open in Payables →</span></div></div></div>` : ""}
+        ${t.contractId ? `<div><div class="label">Contract</div><div class="value">${htmlEsc(t.contractId)}</div></div>` : ""}
+        ${t.poId ? `<div><div class="label">Purchase order</div><div class="value">${htmlEsc(t.poId)}</div></div>` : ""}
+        <div><div class="label">Freight</div><div class="value">${freightCellHtml(t.id)}</div></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2 style="margin-bottom:10px;">Timeline</h2>
+      ${d.timeline && d.timeline.length ? `<ul class="timeline">${d.timeline.map(e => `<li>
+        <div class="when">${fmtWhen(e.created_at)}</div>
+        <div class="what"><b>${TIMELINE_LABELS[e.action] || htmlEsc(e.action)}</b> — ${htmlEsc(e.user_name || "system")}<div class="footnote">${timelineDetail(e)}</div></div>
+      </li>`).join("")}</ul>` : `<div class="empty">No history recorded yet — this ticket was written before the timeline existed.</div>`}
+    </div>
+  `;
+}
+
+/* ---------------- Global search — one box, anything you know about it ---------------- */
+let gsTimer = null, gsResults = null, gsActive = -1;
+function hideGlobalSearch() { const el = document.getElementById("gsearch-results"); if (el) { el.classList.remove("open"); el.innerHTML = ""; } gsResults = null; gsActive = -1; }
+function onGlobalSearch(q) {
+  clearTimeout(gsTimer);
+  if (q.trim().length < 2) { hideGlobalSearch(); return; }
+  gsTimer = setTimeout(async () => {
+    try { gsResults = await apiFetch(`/search?q=${encodeURIComponent(q.trim())}`); renderGlobalSearch(); } catch (err) { /* keep typing; a failed lookup just shows nothing */ }
+  }, 180);
+}
+// Flat list of result rows so arrow keys / Enter can walk them in order.
+function gsRows() {
+  if (!gsResults) return [];
+  const rows = [];
+  gsResults.tickets.forEach(t => rows.push({ group: "Tickets", key: t.id, html: `<span>${htmlEsc(t.id)} <span class="gs-sub">${htmlEsc(t.party_name || "")}${t.hold_desc ? ` · ${htmlEsc(t.hold_desc)}` : ""} · ${commodityName(t.commodity)} · ${isoDay(t.date)}</span></span><span>${fmtMoney(parseFloat(t.total))} ${ticketStatusBadge({ ...t, type: t.type, paid: t.paid, status: t.status, kind: null })}</span>`, go: () => openTicket(t.id) }));
+  gsResults.vendors.forEach(v => rows.push({ group: "Dealers", key: "v" + v.id, html: `<span>${htmlEsc(v.name)} <span class="gs-sub">${htmlEsc(v.phone || "")}</span></span>${tierBadge(v.tier)}`, go: () => { currentRoute = "vendors"; hideGlobalSearch(); render(); } }));
+  gsResults.customers.forEach(c => rows.push({ group: "Customers", key: "c" + c.id, html: `<span>${htmlEsc(c.name)} <span class="gs-sub">${htmlEsc(c.phone || "")}</span></span>`, go: () => { currentRoute = "customers"; hideGlobalSearch(); render(); } }));
+  gsResults.remittances.forEach(r => rows.push({ group: "Checks & remittances", key: "r" + r.id, html: `<span>${r.method}${r.check_number ? ` #${r.check_number}` : ""} <span class="gs-sub">to ${htmlEsc(r.payee)} · ${yardName(r.account)} · ${isoDay(r.date)}</span></span><span>${fmtMoney(parseFloat(r.total))}${r.voided ? ` <span class="badge voided">Voided</span>` : ""}</span>`, go: () => { currentRoute = "reports"; reportsTab = "payables"; hideGlobalSearch(); render(); } }));
+  return rows;
+}
+function renderGlobalSearch() {
+  const el = document.getElementById("gsearch-results"); if (!el) return;
+  const rows = gsRows();
+  if (!rows.length) { el.innerHTML = `<div class="gs-empty">Nothing matches "${htmlEsc(gsResults.q)}". Try a ticket number, a name, a phone number, a check number, or a dollar amount.</div>`; el.classList.add("open"); return; }
+  let lastGroup = null;
+  el.innerHTML = rows.map((r, i) => `${r.group !== lastGroup ? (lastGroup = r.group, `<div class="gs-group">${r.group}</div>`) : ""}<div class="gs-item${i === gsActive ? " active" : ""}" data-i="${i}" onmousedown="event.preventDefault(); gsGo(${i});">${r.html}</div>`).join("");
+  el.classList.add("open");
+}
+function gsGo(i) { const rows = gsRows(); if (rows[i]) { rows[i].go(); const input = document.getElementById("gsearch"); if (input) input.blur(); } }
+function onGlobalSearchKey(ev) {
+  const rows = gsRows();
+  if (ev.key === "Escape") { hideGlobalSearch(); ev.target.blur(); return; }
+  if (!rows.length) return;
+  if (ev.key === "ArrowDown") { gsActive = Math.min(rows.length - 1, gsActive + 1); renderGlobalSearch(); ev.preventDefault(); }
+  else if (ev.key === "ArrowUp") { gsActive = Math.max(0, gsActive - 1); renderGlobalSearch(); ev.preventDefault(); }
+  else if (ev.key === "Enter") { gsGo(gsActive >= 0 ? gsActive : 0); ev.preventDefault(); }
+}
+document.addEventListener("click", (ev) => { if (!ev.target.closest(".gsearch")) hideGlobalSearch(); });
 /* Check Register — one per yard's bank account (see bankAccounts above). Every non-voided check
    drawn on this account reduces the running/book balance the moment it's issued (checkNumber
    assigned); it stays "Outstanding" until you Mark cleared once it actually shows up on the bank
@@ -2755,8 +3054,9 @@ function viewCashierChecks() {
     <div class="panel">
       <div class="panel-head"><h2>Check Register — ${acct ? acct.bankName + " ••" + acct.last4 : yardName(currentYard)}</h2><span class="link" onclick="currentRoute='reports'; reportsTab='payables'; render();">Run a remittance →</span></div>
       <div class="footnote" style="margin-bottom:10px;">Every check drawn on ${yardName(currentYard)}'s account, oldest to newest. Only checks paid FROM this account show here — a remittance can still combine payable lines from other yards, but the check itself is drawn from whichever account was picked when it was created. ACH payments aren't checks, so they don't appear here. A printed check can't be reprinted — pull a VOID copy for your file, or void the payment and run a fresh one if something went wrong.</div>
-      <div class="kpi-row" style="grid-template-columns: repeat(4,1fr); margin-bottom:14px;">
-        <div class="tile"><div class="label">Opening balance <span class="link" style="font-weight:400;" onclick="editBankStartingBalance('${currentYard}')">(edit)</span></div><div class="value">${fmtMoney0(reg.startingBalance)}</div></div>
+      <div class="kpi-row" style="grid-template-columns: repeat(5,1fr); margin-bottom:14px;">
+        <div class="tile"><div class="label">Opening balance ${can("editBankAccounts") ? `<span class="link" style="font-weight:400;" onclick="editBankStartingBalance('${currentYard}')">(edit)</span>` : ""}</div><div class="value">${fmtMoney0(reg.startingBalance)}</div></div>
+        <div class="tile"><div class="label">Next check # <span class="link" style="font-weight:400;" onclick="currentRoute='settings'; settingsTab='bank'; render();">(Settings)</span></div><div class="value">${acct && acct.nextCheckNumber ? "#" + acct.nextCheckNumber : "—"}</div></div>
         <div class="tile"><div class="label">Register balance</div><div class="value">${fmtMoney0(reg.registerBalance)}</div></div>
         <div class="tile"><div class="label">Cleared (bank) balance</div><div class="value">${fmtMoney0(reg.clearedBalance)}</div></div>
         <div class="tile"><div class="label">Outstanding</div><div class="value"${reg.outstandingCount ? ` style="color:var(--warning);"` : ""}>${fmtMoney0(reg.outstandingTotal)}${reg.outstandingCount ? ` (${reg.outstandingCount})` : ""}</div></div>
@@ -6184,7 +6484,9 @@ function recalcRemittanceTotal() {
   let total = 0; boxes.forEach(b => total += parseFloat(b.dataset.amount));
   const el = document.getElementById("rm-total"); if (el) el.textContent = fmtMoney(total);
 }
-function createRemittance() {
+// AP remittance run. Ticket lines are paid through the server (one check, several tickets); freight
+// lines are still demo-only (no freight table yet) and are marked paid locally on the same record.
+async function createRemittance() {
   if (!remittancePayee) { alert("Select who you're paying first."); return; }
   const method = document.getElementById("rm-method").value;
   const checkNumInput = document.getElementById("rm-checknum");
@@ -6192,16 +6494,36 @@ function createRemittance() {
   const boxes = [...document.querySelectorAll(".rm-line:checked")];
   if (!boxes.length) { alert("Select at least one line to include in this payment."); return; }
   const lines = boxes.map(b => { const [kind, id] = b.value.split(":"); return { kind, id, amount: parseFloat(b.dataset.amount) }; });
-  const total = r2(lines.reduce((s, l) => s + l.amount, 0));
-  const id = "RM-" + (remittanceSeq++);
-  const checkNumber = method === "Check" ? ((checkNumInput && checkNumInput.value.trim()) || String(10000 + remittanceSeq)) : null;
-  lines.forEach(l => {
-    if (l.kind === "ticket") { const t = tickets.find(x => x.id === l.id); if (t) { t.paid = true; t.remittanceId = id; } }
-    else { const f = freightTickets.find(x => x.id === l.id); if (f) { f.paid = true; f.remittanceId = id; } }
-  });
-  remittances.push({ id, payee: remittancePayee, method, checkNumber, account, date: CURRENT_DATE, lines, total, emailed: false, printed: false, checkPrinted: false, voided: false, cleared: false, clearedDate: null });
+  const ticketIds = lines.filter(l => l.kind === "ticket").map(l => l.id);
+  const freightLines = lines.filter(l => l.kind === "freight");
+  const checkNumber = (checkNumInput && checkNumInput.value.trim()) || undefined;
+  let rec;
+  if (ticketIds.length) {
+    try {
+      const row = await apiFetch("/remittances", { method: "POST", body: JSON.stringify({ payee: remittancePayee, method, checkNumber, account, date: CURRENT_DATE, ticketIds }) });
+      rec = mapApiRemittance(row);
+      ticketIds.forEach(id => { const t = tickets.find(x => x.id === id); if (t) { t.paid = true; t.remittanceId = rec.id; t.status = "Closed"; } });
+      const acct = findBankAccount(account);
+      if (acct && rec.checkNumber && /^\d+$/.test(rec.checkNumber)) acct.nextCheckNumber = Math.max(acct.nextCheckNumber || 0, parseInt(rec.checkNumber, 10) + 1);
+    } catch (err) {
+      alert("Couldn't create remittance: " + err.message);
+      return;
+    }
+  } else {
+    // Freight-only: nothing to save on the server yet.
+    rec = { id: "RM-" + (remittanceSeq++), payee: remittancePayee, method, checkNumber: method === "Check" ? (checkNumber || null) : null, account, date: CURRENT_DATE, lines: [], total: 0, emailed: false, printed: false, checkPrinted: false, voided: false, cleared: false, clearedDate: null, localOnly: true };
+  }
+  freightLines.forEach(l => { const f = freightTickets.find(x => x.id === l.id); if (f) { f.paid = true; f.remittanceId = rec.id; } rec.lines.push(l); });
+  rec.total = r2(rec.lines.reduce((s, l) => s + l.amount, 0));
+  remittances.push(rec);
   remittancePayee = "";
   render();
+}
+// Check-register flags live on the server; local copy updates first, server catches up.
+async function patchRemittance(r, fields) {
+  if (r.localOnly) return;
+  try { await apiFetch(`/remittances/${encodeURIComponent(r.id)}`, { method: "PATCH", body: JSON.stringify(fields) }); }
+  catch (err) { alert("Saved on screen but not to the server: " + err.message); }
 }
 function printRemittance(id) {
   const r = remittances.find(x => x.id === id); if (!r) return;
@@ -6215,6 +6537,7 @@ function printRemittance(id) {
       <div class="stamp">TOTAL ${fmtMoney(r.total)}</div>
     </div>`;
   r.printed = true;
+  patchRemittance(r, { printed: true });
   window.print();
   render();
 }
@@ -6222,6 +6545,7 @@ function emailRemittance(id) {
   const r = remittances.find(x => x.id === id); if (!r) return;
   if (r.voided) { alert("This remittance has been voided — there's nothing to email."); return; }
   r.emailed = true;
+  patchRemittance(r, { emailed: true });
   alert(`Demo only — no email server connected in this prototype. In the real system this would email the remittance advice for ${fmtMoney(r.total)} to ${r.payee}'s contact on file.`);
   render();
 }
@@ -6263,6 +6587,7 @@ function printCheck(remittanceId) {
   if (r.checkPrinted) { alert("This check has already been printed once. Print a VOID copy for your records, or void the payment and start over — reprinting the original isn't allowed."); return; }
   document.getElementById("print-area").innerHTML = buildCheckHtml(r, false);
   r.checkPrinted = true;
+  patchRemittance(r, { checkPrinted: true });
   window.print();
   render();
 }
@@ -6291,13 +6616,18 @@ function buildCheckHtml(r, isVoidCopy) {
       <div class="stamp" style="margin-top:20px;">${isVoidCopy ? "VOID" : "VOID IF NOT PRESENTED WITHIN 90 DAYS"}</div>
     </div>`;
 }
-function voidRemittance(remittanceId) {
+async function voidRemittance(remittanceId) {
   const r = remittances.find(x => x.id === remittanceId);
   if (!r) return;
   if (r.voided) { alert("This remittance is already voided."); return; }
   const checkNote = r.method === "Check" && r.printed ? ` Be sure to void check #${r.checkNumber || "—"} with the bank if it was already handed out or mailed.` : "";
-  if (!confirm(`Void remittance ${r.id} — ${fmtMoney(r.total)} to ${r.payee}? This marks its ${r.lines.length} line${r.lines.length === 1 ? "" : "s"} unpaid again so a fresh remittance can be run in its place.${checkNote}`)) return;
-  r.voided = true;
+  const reason = prompt(`Void remittance — ${fmtMoney(r.total)} to ${r.payee}? This marks its ${r.lines.length} line${r.lines.length === 1 ? "" : "s"} unpaid again so a fresh remittance can be run in its place.${checkNote}\n\nReason:`);
+  if (reason === null) return;
+  if (!r.localOnly) {
+    try { await apiFetch(`/remittances/${encodeURIComponent(r.id)}/void`, { method: "POST", body: JSON.stringify({ reason: reason.trim() }) }); }
+    catch (err) { alert("Couldn't void: " + err.message); return; }
+  }
+  r.voided = true; r.voidReason = reason.trim() || null;
   r.cleared = false; r.clearedDate = null;
   r.lines.forEach(l => {
     if (l.kind === "ticket") { const t = tickets.find(x => x.id === l.id); if (t) { t.paid = false; t.remittanceId = null; } }
@@ -6312,11 +6642,13 @@ function markCheckCleared(remittanceId) {
   const r = remittances.find(x => x.id === remittanceId); if (!r) return;
   if (r.voided) { alert("This check has been voided — nothing to clear."); return; }
   r.cleared = true; r.clearedDate = CURRENT_DATE;
+  patchRemittance(r, { cleared: true, clearedDate: CURRENT_DATE });
   render();
 }
 function markCheckOutstanding(remittanceId) {
   const r = remittances.find(x => x.id === remittanceId); if (!r) return;
   r.cleared = false; r.clearedDate = null;
+  patchRemittance(r, { cleared: false });
   render();
 }
 function remittanceStatusActionsHtml(r) {
@@ -6637,11 +6969,40 @@ function viewDocuments() {
 }
 let settingsTab = "overview";
 function viewSettings() {
-  const tabs = [["overview","Overview"],["users","Users"],["roles","Roles"],["buttons","Button Maker"]];
-  const bodies = { overview: viewSettingsOverview, users: viewSettingsUsers, roles: viewSettingsRoles, buttons: viewSettingsButtons };
+  const tabs = [["overview","Overview"],["users","Users"],["roles","Roles"],["bank","Bank Accounts & Checks"],["buttons","Button Maker"]];
+  const bodies = { overview: viewSettingsOverview, users: viewSettingsUsers, roles: viewSettingsRoles, bank: viewSettingsBank, buttons: viewSettingsButtons };
   return `
     <div class="tabs">${tabs.map(([id,label]) => `<button class="tab ${settingsTab===id?'active':''}" onclick="settingsTab='${id}'; render();">${label}</button>`).join("")}</div>
     ${bodies[settingsTab]()}
+  `;
+}
+
+/* ---------------- Settings — Bank Accounts & Checks ----------------
+   One row per yard: the account checks are drawn on, its opening balance for the register, and
+   the next check number to hand out. Set the check number to match the stock in the drawer; the
+   cashier can still type a different number on any individual check. */
+function viewSettingsBank() {
+  const canEdit = can("editBankAccounts");
+  const issued = (yard) => remittances.filter(r => r.method === "Check" && r.account === yard && !r.voided).length;
+  return `
+    ${!canEdit ? `<div class="banner" style="border-left-color:var(--critical);">Read-only — changing an account's opening balance or next check number needs the "Edit bank accounts" permission.</div>` : ""}
+    <div class="panel">
+      <div class="panel-head"><h2>Bank accounts — one per yard</h2></div>
+      <div class="footnote" style="margin-bottom:10px;">Checks are numbered in order per account. Set <b>Next check #</b> to the number printed on the next blank check in that yard's drawer; every check the cashier or AP cuts from then on takes the next number automatically (a typed number on a specific check still wins, and the sequence skips past it).</div>
+      <table>
+        <thead><tr><th>Yard</th><th>Bank</th><th>Account</th><th class="num">Opening balance</th><th class="num">Next check #</th><th class="num">Checks issued</th><th></th></tr></thead>
+        <tbody>${YARDS.map(y => { const a = findBankAccount(y.code); return `<tr>
+          <td><b>${yardName(y.code)}</b></td>
+          <td>${a ? htmlEsc(a.bankName) : "—"}</td>
+          <td>${a ? "••" + htmlEsc(a.last4) : "—"}</td>
+          <td class="num">${a ? fmtMoney(a.startingBalance) : "—"}</td>
+          <td class="num"><b>${a && a.nextCheckNumber ? "#" + a.nextCheckNumber : "—"}</b></td>
+          <td class="num">${issued(y.code)}</td>
+          <td style="display:flex; gap:6px; flex-wrap:wrap;">${canEdit && a ? `<button class="btn ghost small" onclick="editNextCheckNumber('${y.code}')">Set next check #</button><button class="btn ghost small" onclick="editBankStartingBalance('${y.code}')">Set opening balance</button>` : ""}</td>
+        </tr>`; }).join("")}</tbody>
+      </table>
+      <div class="footnote" style="margin-top:8px;">Bank name and last four digits are set up in the database for now; a form for them comes with the QuickBooks work.</div>
+    </div>
   `;
 }
 
@@ -6983,7 +7344,7 @@ function renderNotifBell() {
 function render() {
   renderNav();
   renderYardPicker();
-  document.getElementById("pagetitle").textContent = pageTitles[currentRoute];
+  document.getElementById("pagetitle").textContent = pageTitles[currentRoute] || (currentRoute === "ticket" ? `Ticket ${currentTicketId || ""}` : "");
   document.getElementById("alertcount").textContent = computeAlerts().length;
   renderNotifBell();
   const main = document.getElementById("main");
@@ -6994,6 +7355,7 @@ function render() {
     inventory: viewInventory, freight: viewFreight, maintenance: viewMaintenance,
     customers: viewCustomers, vendors: viewVendors, commodities: viewCommodities, pricelists: viewPriceLists, accounting: viewQuickBooks,
     kbi: viewKbi, reports: viewReports, documents: viewDocuments, settings: viewSettings,
+    ticket: viewTicketPage, // not in the sidebar — reached from search, lists, and the cashier queue
   };
   main.innerHTML = viewMap[currentRoute]();
   if (!isCorp() && currentRoute === "sales" && salesTab === "tickets") { updateTicketPrice("sell"); }
