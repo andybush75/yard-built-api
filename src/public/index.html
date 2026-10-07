@@ -678,7 +678,9 @@ function commodityName(code) { if (!code) return "—"; const c = findCommodity(
 // masterPriceAtYard: our expected sale price for this commodity at this yard (master price × yard multiplier). Used for sell tickets.
 function masterPriceAtYard(code, yard) {
   const c = findCommodity(code); if (!c) return 0;
-  return r3(c.masterPrice * (YARD_MULT[yard] ?? 1));
+  // Multipliers come from app settings once loaded (the server prices transfers with the same ones).
+  const mult = (appSettings && appSettings.yard_price_multipliers && appSettings.yard_price_multipliers[yard]) ?? YARD_MULT[yard] ?? 1;
+  return r3(c.masterPrice * mult);
 }
 // tierPrice: what a dealer at this tier gets paid for this commodity at this yard — master price at yard, minus that tier's margin. Used for buy tickets.
 function tierPrice(code, yard, tier) {
@@ -1026,7 +1028,7 @@ function updatePoQtyLabels() {
   const cl = document.getElementById("po-committed-label"); if (cl) cl.textContent = `Committed quantity (${u})`;
   const rl = document.getElementById("po-received-label"); if (rl) rl.textContent = `Already received (${u})`;
 }
-function addPurchaseOrder() {
+async function addPurchaseOrder() {
   const vendorId = document.getElementById("po-vendor").value;
   const commodity = document.getElementById("po-commodity").value;
   const yard = document.getElementById("po-yard").value;
@@ -1043,8 +1045,9 @@ function addPurchaseOrder() {
     alert(`PO # "${id}" is already in use — enter a different number.`);
     return;
   }
+  try { purchaseOrders.push(mapApiPurchaseOrder(await apiFetch("/purchase-orders", { method: "POST", body: JSON.stringify({ id, vendorId, commodity, yard, committedQty, receivedQty, endDate, notes }) }))); }
+  catch (err) { alert("Couldn't add purchase order: " + err.message); return; }
   poSeq++;
-  purchaseOrders.push({ id, vendorId, commodity, yard, committedQty, receivedQty, endDate, notes });
   render();
 }
 function promptRenamePurchaseOrder(id) {
@@ -1054,7 +1057,7 @@ function promptRenamePurchaseOrder(id) {
   if (input === null) return;
   renamePurchaseOrder(id, input);
 }
-function renamePurchaseOrder(oldId, newId) {
+async function renamePurchaseOrder(oldId, newId) {
   const p = findPurchaseOrder(oldId);
   if (!p) return;
   const trimmed = (newId || "").trim();
@@ -1063,11 +1066,13 @@ function renamePurchaseOrder(oldId, newId) {
     alert(`PO # "${trimmed}" is already in use by another purchase order.`);
     return;
   }
+  try { await apiFetch(`/purchase-orders/${encodeURIComponent(oldId)}/rename`, { method: "PATCH", body: JSON.stringify({ newId: trimmed }) }); }
+  catch (err) { alert("Couldn't rename: " + err.message); return; }
   p.id = trimmed;
   tickets.forEach(t => { if (t.poId === oldId) t.poId = trimmed; });
   render();
 }
-function logPurchaseOrderReceipt(id) {
+async function logPurchaseOrderReceipt(id) {
   const p = findPurchaseOrder(id);
   if (!p) return;
   const remaining = Math.max(0, p.committedQty - p.receivedQty);
@@ -1075,7 +1080,8 @@ function logPurchaseOrderReceipt(id) {
   if (input === null) return;
   const qty = parseFloat(input) || 0;
   if (qty <= 0) return;
-  p.receivedQty = Math.min(p.committedQty, p.receivedQty + qty);
+  try { Object.assign(p, mapApiPurchaseOrder(await apiFetch(`/purchase-orders/${encodeURIComponent(id)}/log-receipt`, { method: "POST", body: JSON.stringify({ qty }) }))); }
+  catch (err) { alert("Couldn't log receipt: " + err.message); }
   render();
 }
 
@@ -1214,6 +1220,7 @@ function mapApiTicket(t) {
     total: parseFloat(t.total), payment: t.payment, synced: !!t.synced, paid: !!t.paid,
     remittanceId: t.remittance_id, status: t.status, cogsPerLb: t.cogs_per_lb != null ? parseFloat(t.cogs_per_lb) : null,
     contractId: t.contract_id, poId: t.po_id, shipmentId: t.shipment_id, holdDescription: t.hold_desc,
+    kind: t.kind || null, transferId: t.transfer_id || null, linkedTicketId: t.linked_ticket_id || null,
     createdAt: t.created_at || null, closedAt: t.closed_at || null, voidedAt: t.voided_at || null, voidReason: t.void_reason || null,
     trailerId: t.trailer_id || null,
   };
@@ -1268,6 +1275,50 @@ function trailerPickerHtml(selectId, selected, label = "Trailer / rail car (opti
   return `<div><label>${label}</label><select id="${selectId}"><option value="">— none / unknown —</option>${list.map(t => `<option value="${t.id}" ${t.id === selected ? "selected" : ""}>${htmlEsc(t.number)} · ${htmlEsc(t.type)} · ${yardName(t.yard)}${t.carrierName ? " · " + htmlEsc(t.carrierName) : ""}</option>`).join("")}</select></div>`;
 }
 function pickedTrailer(selectId) { const el = document.getElementById(selectId); return el && el.value ? el.value : null; }
+function mapApiAsset(a) {
+  return { id: a.id, yard: a.yard, year: a.year || null, make: a.make || "—", model: a.model || "—", type: a.type, meterType: a.meter_type, meter: parseFloat(a.meter) || 0, status: a.status, customItems: a.custom_items || [], notes: a.notes || "", active: a.active !== false };
+}
+function mapApiPm(p) {
+  return { id: p.id, assetId: p.asset_id, name: p.name, trigger: p.trigger, interval: p.interval, lastDoneMeter: p.last_done_meter != null ? parseFloat(p.last_done_meter) : null, lastDoneDate: isoDay(p.last_done_date) };
+}
+function mapApiWorkOrder(w) {
+  return {
+    id: w.id, assetId: w.asset_id, yard: w.yard, title: w.title, priority: w.priority, status: w.status, assigneeId: w.assignee_id || null,
+    issuedDate: isoDay(w.issued_date), statusChangedDate: isoDay(w.status_changed_at), statusChangedAt: w.status_changed_at, meterAtIssue: w.meter_at_issue != null ? parseFloat(w.meter_at_issue) : null,
+    fromPM: w.from_pm_id || null, fromInspection: w.from_inspection_id || null, items: w.items || null, shopName: w.shop_name || null,
+    invoice: (w.shop_name || w.invoice_amount != null || w.invoice_file_name || w.has_invoice_file || w.invoice_data_url)
+      ? { amount: w.invoice_amount != null ? parseFloat(w.invoice_amount) : null, fileName: w.invoice_file_name || null, dataUrl: w.invoice_data_url || null, hasFile: !!(w.has_invoice_file || w.invoice_data_url) } : null,
+    completedAt: w.completed_at || null, completedBy: w.completed_by_name || null, notes: w.notes || "",
+  };
+}
+function mapApiInspection(i) {
+  return { id: i.id, assetId: i.asset_id, yard: i.yard, date: isoDay(i.date), meterValue: i.meter_value != null ? parseFloat(i.meter_value) : 0, service: i.service, type: i.type, completedBy: i.completed_by || "—", results: i.results || [], score: parseFloat(i.score) };
+}
+function mapApiNotification(n) {
+  return { id: n.id, userId: n.user_id, woId: n.ref_type === "work_order" ? n.ref_id : null, message: n.message, createdAt: isoDay(n.created_at), read: !!n.read };
+}
+// Replaces a work order in the local list with the server's version.
+function absorbWorkOrder(row) {
+  const m = mapApiWorkOrder(row);
+  const i = workOrders.findIndex(w => w.id === m.id);
+  if (i >= 0) workOrders[i] = m; else workOrders.push(m);
+  return m;
+}
+// Checklist templates live in app settings so an edit applies on every station, not just this one.
+function applyInspectionTemplates(saved) {
+  Object.keys(INSPECTION_TEMPLATES).forEach(k => delete INSPECTION_TEMPLATES[k]);
+  Object.entries(saved).forEach(([k, v]) => { INSPECTION_TEMPLATES[k] = v; });
+}
+async function saveInspectionTemplates() {
+  try { await apiFetch("/settings", { method: "PATCH", body: JSON.stringify({ inspection_templates: INSPECTION_TEMPLATES }) }); }
+  catch (err) { alert("Template change shown here but not saved: " + err.message); }
+}
+function mapApiContract(c) {
+  return { id: c.id, customerId: c.customer_id, customerName: c.customer_name || null, commodity: c.commodity, yard: c.yard, committedQty: parseFloat(c.committed_qty), shippedQty: parseFloat(c.shipped_qty) || 0, endDate: isoDay(c.end_date), notes: c.notes || "", terms: c.terms || null };
+}
+function mapApiPurchaseOrder(p) {
+  return { id: p.id, vendorId: p.vendor_id, vendorName: p.vendor_name || null, commodity: p.commodity, yard: p.yard, committedQty: parseFloat(p.committed_qty), receivedQty: parseFloat(p.received_qty) || 0, endDate: isoDay(p.end_date), notes: p.notes || "" };
+}
 function mapApiBankAccount(b) {
   return { yard: b.yard, bankName: b.bank_name, last4: b.last4, startingBalance: parseFloat(b.starting_balance) || 0, nextCheckNumber: b.next_check_number };
 }
@@ -1340,7 +1391,7 @@ async function patchParty(kind, id, fields) {
 // login. Any (yard, commodity) pair with no rows yet in inventory_balances is left at qty 0 /
 // avgCost = that commodity's master price, matching how the backend itself would start it.
 async function bootstrapFromApi() {
-  const [apiCommodities, balances, ledger, apiTickets, apiVendors, apiCustomers, apiUsers, apiRoles, apiRemittances, apiBankAccounts, apiFreight, apiLanes, apiCarriers, apiTrailers, apiSettings] = await Promise.all([
+  const [apiCommodities, balances, ledger, apiTickets, apiVendors, apiCustomers, apiUsers, apiRoles, apiRemittances, apiBankAccounts, apiFreight, apiLanes, apiCarriers, apiTrailers, apiSettings, apiAssets, apiPm, apiWorkOrders, apiInspections, apiNotifications, apiContracts, apiPurchaseOrders, apiTransfers] = await Promise.all([
     apiFetch("/commodities"),
     apiFetch("/inventory/balances"),
     apiFetch("/inventory/ledger?limit=1000"),
@@ -1356,7 +1407,25 @@ async function bootstrapFromApi() {
     apiFetch("/carriers"),
     apiFetch("/trailers"),
     apiFetch("/settings"),
+    apiFetch("/maintenance/assets?includeInactive=true"),
+    apiFetch("/maintenance/pm"),
+    apiFetch("/maintenance/work-orders?limit=2000"),
+    apiFetch("/maintenance/inspections?limit=1000"),
+    apiFetch("/notifications"),
+    apiFetch("/contracts"),
+    apiFetch("/purchase-orders"),
+    apiFetch("/transfers?limit=1000"),
   ]);
+  contracts = apiContracts.map(mapApiContract);
+  purchaseOrders = apiPurchaseOrders.map(mapApiPurchaseOrder);
+  yardTransfers = apiTransfers.map(mapApiTransfer).reverse();
+  if (apiSettings && apiSettings.transfer_default_margin_pct != null) yardTransferMarginPct = parseFloat(apiSettings.transfer_default_margin_pct);
+  assets = apiAssets.map(mapApiAsset);
+  pmSchedules = apiPm.map(mapApiPm);
+  workOrders = apiWorkOrders.map(mapApiWorkOrder).reverse();
+  inspections = apiInspections.map(mapApiInspection);
+  notifications = apiNotifications.map(mapApiNotification).reverse();
+  if (apiSettings && apiSettings.inspection_templates) applyInspectionTemplates(apiSettings.inspection_templates);
   freightTickets = apiFreight.map(mapApiFreight).reverse();
   freightLanes = apiLanes.map(mapApiLane);
   carriers = apiCarriers.map(mapApiCarrier);
@@ -1442,12 +1511,21 @@ function notifyAssignment(wo, userId) {
 }
 function myNotifications() { return notifications.filter(n => n.userId === currentUserId).slice().reverse(); }
 function unreadNotifCount() { return myNotifications().filter(n => !n.read).length; }
-function toggleNotifPanel() { notifPanelOpen = !notifPanelOpen; render(); }
-function markAllNotifsRead() { notifications.forEach(n => { if (n.userId === currentUserId) n.read = true; }); render(); }
+async function refreshNotifications() {
+  if (!authToken) return;
+  try { notifications = (await apiFetch("/notifications")).map(mapApiNotification).reverse(); render(); } catch (e) { /* bell just stays as it was */ }
+}
+function toggleNotifPanel() { notifPanelOpen = !notifPanelOpen; render(); if (notifPanelOpen) refreshNotifications(); }
+function markAllNotifsRead() {
+  notifications.forEach(n => { if (n.userId === currentUserId) n.read = true; });
+  if (authToken) apiFetch("/notifications/read-all", { method: "PATCH" }).catch(() => {});
+  render();
+}
 function openNotification(id) {
   const n = notifications.find(x => x.id === id);
   if (!n) return;
   n.read = true;
+  if (authToken) apiFetch(`/notifications/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ read: true }) }).catch(() => {});
   notifPanelOpen = false;
   const wo = findWorkOrder(n.woId);
   if (wo) currentYard = wo.yard;
@@ -1578,42 +1656,63 @@ function computeTransferPrice(code, fromYard, marginBasis, marginValue) {
   if (marginBasis === "perton") return r3(master + marginValue / 2000);
   return r3(master * (1 + marginValue / 100));
 }
-function updateYardTransferMargin(v) { yardTransferMarginPct = Math.max(0, parseFloat(v) || 0); render(); }
-function createYardTransfer(fromYard, toYard, code, qty, marginBasis, marginValue, notes, date = CURRENT_DATE, live = true) {
+function updateYardTransferMargin(v) {
+  yardTransferMarginPct = Math.max(0, parseFloat(v) || 0);
+  if (can("manageUsers")) apiFetch("/settings", { method: "PATCH", body: JSON.stringify({ transfer_default_margin_pct: yardTransferMarginPct }) }).catch(err => alert("Default not saved for everyone: " + err.message));
+  render();
+}
+function mapApiTransfer(x) {
+  return {
+    id: x.id, date: isoDay(x.date), fromYard: x.from_yard, toYard: x.to_yard, commodity: x.commodity, netWeight: parseFloat(x.net_weight),
+    marginBasis: x.margin_basis, marginValue: parseFloat(x.margin_value), price: parseFloat(x.price), total: parseFloat(x.total),
+    cogsPerLb: x.cogs_per_lb != null ? parseFloat(x.cogs_per_lb) : null, marginDollars: x.margin_dollars != null ? parseFloat(x.margin_dollars) : null,
+    notes: x.notes || "", sellTicketId: x.sell_ticket_id, buyTicketId: x.buy_ticket_id, status: x.status,
+    reconciledDate: isoDay(x.reconciled_at), reconciledBy: x.reconciled_by_name || null, voidReason: x.void_reason || null,
+  };
+}
+// Posts the transfer; the server writes both legs and moves inventory. Both yards' balances and
+// ledgers are refreshed from its answer so the screen matches the books.
+async function createYardTransfer(fromYard, toYard, code, qty, marginBasis, marginValue, notes, date = CURRENT_DATE) {
   if (fromYard === toYard) { alert("Choose a different destination yard."); return null; }
   if (qty <= 0) { alert(isEachUnit(code) ? "Enter a quantity greater than zero." : "Enter a weight greater than zero."); return null; }
   const avail = getInventoryQty(fromYard, code);
   if (qty > avail) { alert(`Only ${fmtQty(code, avail)} of ${commodityName(code)} on hand at ${yardName(fromYard)}.`); return null; }
-  const price = computeTransferPrice(code, fromYard, marginBasis, marginValue);
-  const total = r2(qty * price);
-  const xferId = "YT-" + (yardTransferSeq++);
-  const sellId = "S-" + (ticketSeqSell++);
-  const buyId = "B-" + (ticketSeq++);
-  const cogsPerLb = getInventoryAvgCost(fromYard, code);
-  tickets.push({ id: sellId, type: "sell", date, yard: fromYard, party: `Yard Transfer → ${yardName(toYard)}`, partyId: null,
-    commodity: code, tier: null, netWeight: qty, price, total, payment: "Internal Transfer", synced: false, cogsPerLb,
-    paid: false, remittanceId: null, kind: "transfer", transferId: xferId, transferPeerYard: toYard, linkedTicketId: buyId });
-  tickets.push({ id: buyId, type: "buy", date, yard: toYard, party: `Yard Transfer ← ${yardName(fromYard)}`, partyId: null,
-    commodity: code, tier: null, netWeight: qty, price, total, payment: "Internal Transfer", synced: false,
-    paid: true, remittanceId: null, kind: "transfer", transferId: xferId, transferPeerYard: fromYard, linkedTicketId: sellId });
-  applyInventorySell(fromYard, code, qty, sellId, date, live, "Transfer Out");
-  applyInventoryBuy(toYard, code, qty, price, buyId, date, live, "Transfer In");
-  const xfer = { id: xferId, date, fromYard, toYard, commodity: code, netWeight: qty, marginBasis, marginValue, price, total,
-    notes: notes || "", sellTicketId: sellId, buyTicketId: buyId, status: "Open", reconciledDate: null };
-  yardTransfers.push(xfer);
-  return xfer;
+  try {
+    const row = await apiFetch("/transfers", { method: "POST", body: JSON.stringify({ fromYard, toYard, commodity: code, netWeight: qty, marginBasis, marginValue, notes, date, trailerId: pickedTrailer("tf-trailer") }) });
+    const xfer = mapApiTransfer(row);
+    yardTransfers.push(xfer);
+    const [sellT, buyT] = await Promise.all([apiFetch(`/tickets/${encodeURIComponent(xfer.sellTicketId)}`), apiFetch(`/tickets/${encodeURIComponent(xfer.buyTicketId)}`)]);
+    absorbTicket(sellT); absorbTicket(buyT);
+    await Promise.all([refreshInventoryFor(fromYard, [code]), refreshInventoryFor(toYard, [code])]);
+    return xfer;
+  } catch (err) {
+    alert("Couldn't create transfer: " + err.message);
+    return null;
+  }
 }
 function findYardTransfer(id) { return yardTransfers.find(x => x.id === id); }
-function reconcileYardTransfer(id) {
+async function reconcileYardTransfer(id) {
   const x = findYardTransfer(id);
-  if (!x || x.status === "Reconciled") return;
-  x.status = "Reconciled";
-  x.reconciledDate = CURRENT_DATE;
+  if (!x || x.status !== "Open") return;
+  try { Object.assign(x, mapApiTransfer(await apiFetch(`/transfers/${encodeURIComponent(id)}/reconcile`, { method: "POST" }))); }
+  catch (err) { alert("Couldn't reconcile: " + err.message); }
   render();
 }
-(function seedYardTransfers() {
-  createYardTransfer("HAYS", "RC", "HMS1", 5000, "pct", 6, "Balancing HMS #1 ahead of an RC mill run", "2026-08-15", false);
-})();
+async function voidYardTransfer(id) {
+  const x = findYardTransfer(id); if (!x) return;
+  if (x.status !== "Open") { alert(`Transfer is ${x.status.toLowerCase()} — it can't be voided.`); return; }
+  const reason = prompt(`Void transfer ${id} (${fmtQty(x.commodity, x.netWeight)} ${commodityName(x.commodity)}, ${yardName(x.fromYard)} → ${yardName(x.toYard)})? Both tickets are voided and the material goes back to ${yardName(x.fromYard)}.\n\nReason:`);
+  if (reason === null) return;
+  if (!reason.trim()) { alert("A reason is required."); return; }
+  try {
+    Object.assign(x, mapApiTransfer(await apiFetch(`/transfers/${encodeURIComponent(id)}/void`, { method: "POST", body: JSON.stringify({ reason: reason.trim() }) })));
+    const [sellT, buyT] = await Promise.all([apiFetch(`/tickets/${encodeURIComponent(x.sellTicketId)}`), apiFetch(`/tickets/${encodeURIComponent(x.buyTicketId)}`)]);
+    absorbTicket(sellT); absorbTicket(buyT);
+    await Promise.all([refreshInventoryFor(x.fromYard, [x.commodity]), refreshInventoryFor(x.toYard, [x.commodity])]);
+  } catch (err) { alert("Couldn't void: " + err.message); }
+  render();
+}
+// Transfers load from the API at login (bootstrapFromApi); nothing is seeded locally.
 
 /* ---------------- Labor & Productivity (ClockShark) ----------------
    Sales-per-Man-Hour, straight from the real Volumes sheet, needs labor hours — something Yard-Built
@@ -2786,7 +2885,7 @@ async function completeKioskTicket() {
         method: "POST",
         body: JSON.stringify({
           type: "buy", date: CURRENT_DATE, yard: currentYard, vendorId: partyId, partyName: holdDescription || party,
-          commodity: line.code, tier: line.tier, netWeight: line.netWeight, price: line.price, payment, trailerId: pickedTrailer("kf-trailer"),
+          commodity: line.code, tier: line.tier, netWeight: line.netWeight, price: line.price, payment, trailerId: pickedTrailer("kf-trailer"), poId: line.poId || null,
         }),
       });
       newIds.push(apiTicket.id);
@@ -3404,7 +3503,7 @@ async function submitTicket(type) {
       const dueDate = addDays(CURRENT_DATE, TERMS_DAYS[terms] || 0);
       const apiTicket = await apiFetch("/tickets", {
         method: "POST",
-        body: JSON.stringify({ type: "sell", date: CURRENT_DATE, yard: currentYard, customerId: partyId, partyName: holdDescription || partyName, commodity: line.commodity, netWeight: line.netWeight, price: line.price, payment, trailerId: pickedTrailer("tf-trailer") }),
+        body: JSON.stringify({ type: "sell", date: CURRENT_DATE, yard: currentYard, customerId: partyId, partyName: holdDescription || partyName, commodity: line.commodity, netWeight: line.netWeight, price: line.price, payment, trailerId: pickedTrailer("tf-trailer"), contractId: line.contractId || null }),
       });
       const t = mapApiTicket(apiTicket);
       t.gross = line.gross; t.tare = line.tare; t.terms = terms; t.dueDate = dueDate; t.shipmentId = shipmentId;
@@ -4113,14 +4212,14 @@ function updateYtPreview() {
   const label = document.getElementById("yt-weight-label");
   if (label) label.textContent = `Weight (${qtyUnitLabel(code)})`;
 }
-function submitYardTransfer() {
+async function submitYardTransfer() {
   const toYard = document.getElementById("yt-to").value;
   const code = document.getElementById("yt-commodity").value;
   const qty = parseFloat(document.getElementById("yt-weight").value) || 0;
   const basis = document.getElementById("yt-margin-basis").value;
   const value = parseFloat(document.getElementById("yt-margin-value").value) || 0;
   const notes = document.getElementById("yt-notes").value.trim();
-  const xfer = createYardTransfer(currentYard, toYard, code, qty, basis, value, notes);
+  const xfer = await createYardTransfer(currentYard, toYard, code, qty, basis, value, notes);
   if (xfer) {
     attachFreightFromTicketForm(xfer.sellTicketId);
     render();
@@ -4131,7 +4230,7 @@ function renderYardTransferTable(rows, showYards) {
   return `<table><thead><tr><th>Transfer</th><th>Date</th><th>From</th><th>To</th><th>Commodity</th><th class="num">Weight</th><th>Margin</th><th class="num">Price</th><th class="num">Total</th><th>Freight</th><th>Status</th><th>Notes</th></tr></thead>
     <tbody>${rows.map(x => {
       const freight = freightTickets.find(f => f.ticketId === x.sellTicketId);
-      return `<tr><td class="mono">${x.id}</td><td>${x.date}</td><td>${yardName(x.fromYard)}</td><td>${yardName(x.toYard)}</td><td>${commodityName(x.commodity)}</td><td class="num">${fmtQty(x.commodity, x.netWeight)}</td><td>${marginLabel(x.marginBasis || "pct", x.marginValue != null ? x.marginValue : yardTransferMarginPct)}</td><td class="num">${fmtRate(x.commodity,x.price)}</td><td class="num">${fmtMoney(x.total)}</td><td>${freight ? fmtMoney(freight.cost) : "—"}</td><td>${x.status === "Reconciled" ? `<span class="badge ok">Reconciled</span>` : `<span class="badge scheduled">Open</span>`}</td><td>${x.notes||"—"}</td></tr>`;
+      return `<tr><td class="mono">${x.id}</td><td>${x.date}</td><td>${yardName(x.fromYard)}</td><td>${yardName(x.toYard)}</td><td>${commodityName(x.commodity)}</td><td class="num">${fmtQty(x.commodity, x.netWeight)}</td><td>${marginLabel(x.marginBasis || "pct", x.marginValue != null ? x.marginValue : yardTransferMarginPct)}</td><td class="num">${fmtRate(x.commodity,x.price)}</td><td class="num">${fmtMoney(x.total)}</td><td>${freight ? fmtMoney(freight.cost) : "—"}</td><td>${x.status === "Reconciled" ? `<span class="badge ok">Reconciled</span>` : x.status === "Voided" ? `<span class="badge voided">Voided</span>` : `<span class="badge scheduled">Open</span>`}</td><td>${htmlEsc(x.notes||"—")}${x.sellTicketId ? `<div class="footnote" style="margin:2px 0 0;">${ticketLink(x.sellTicketId)} / ${ticketLink(x.buyTicketId)}</div>` : ""}</td></tr>`;
     }).join("")}</tbody></table>`;
 }
 
@@ -4477,28 +4576,37 @@ function addDays(dateStr, n) {
   d.setDate(d.getDate() + n);
   return d.toISOString().slice(0, 10);
 }
-function generateWOFromPM(pmId) {
-  const pm = pmSchedules.find(p => p.id === pmId);
-  const a = findAsset(pm.assetId);
-  const typeCode = a.id.startsWith("E") ? "FP" : "TRAN";
-  const id = `LIS.${MAINT_YARD_CODE[a.yard]}.${typeCode}.${woSeq++}`;
-  workOrders.push({ id, assetId: a.id, yard: a.yard, title: pm.name, priority: 3, status: "not_started", assigneeId: null, issuedDate: CURRENT_DATE, statusChangedDate: CURRENT_DATE, meterAtIssue: a.meter, fromPM: pm.id });
-  if (pm.trigger === "meter") { pm.lastDoneMeter = a.meter; } else { pm.lastDoneDate = CURRENT_DATE; }
+async function generateWOFromPM(pmId) {
+  const pm = pmSchedules.find(p => p.id === pmId); if (!pm) return;
+  try {
+    const res = await apiFetch(`/maintenance/pm/${encodeURIComponent(pmId)}/generate`, { method: "POST" });
+    absorbWorkOrder(res.workOrder);
+    Object.assign(pm, mapApiPm(res.pm));
+  } catch (err) { alert("Couldn't generate work order: " + err.message); }
   render();
 }
-function addAsset() {
+async function addAsset() {
   const id = document.getElementById("as-id").value.trim().toUpperCase();
   if (!id) { alert("Enter an asset/fleet number."); return; }
   if (findAsset(id)) { alert("That asset number is already in use."); return; }
-  assets.push({
-    id, yard: currentYard, year: Number(document.getElementById("as-year").value) || new Date(CURRENT_DATE).getFullYear(),
-    make: document.getElementById("as-make").value.trim() || "—", model: document.getElementById("as-model").value.trim() || "—",
+  const body = {
+    id, yard: currentYard, year: Number(document.getElementById("as-year").value) || null,
+    make: document.getElementById("as-make").value.trim() || null, model: document.getElementById("as-model").value.trim() || null,
     type: document.getElementById("as-type").value, meterType: document.getElementById("as-metertype").value,
-    meter: Number(document.getElementById("as-meter").value) || 0, status: "up",
-  });
+    meter: Number(document.getElementById("as-meter").value) || 0,
+  };
+  try { assets.push(mapApiAsset(await apiFetch("/maintenance/assets", { method: "POST", body: JSON.stringify(body) }))); }
+  catch (err) { alert("Couldn't add asset: " + err.message); return; }
   newAssetOpen = false; render();
 }
-function toggleAssetStatus(id) { const a = findAsset(id); a.status = a.status === "up" ? "down" : "up"; render(); }
+async function patchAsset(id, fields) {
+  const a = findAsset(id); if (!a) return null;
+  try { Object.assign(a, mapApiAsset(await apiFetch(`/maintenance/assets/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(fields) }))); }
+  catch (err) { alert("Couldn't save asset: " + err.message); }
+  render();
+  return a;
+}
+function toggleAssetStatus(id) { const a = findAsset(id); if (a) patchAsset(id, { status: a.status === "up" ? "down" : "up" }); }
 let newAssetOpen = false, newPMOpen = false, newWOOpen = false;
 
 let workOrders = [
@@ -4516,14 +4624,18 @@ let workOrders = [
 let woSeq = 1211;
 function findWorkOrder(id) { return workOrders.find(w => w.id === id); }
 function woHoursInStatus(wo) { return daysSince(wo.statusChangedDate) * 24; }
-function moveWorkOrder(id, dir) {
-  const wo = findWorkOrder(id);
-  const idx = WO_STATUSES.indexOf(wo.status);
-  wo.status = WO_STATUSES[Math.min(WO_STATUSES.length - 1, Math.max(0, idx + dir))];
-  wo.statusChangedDate = CURRENT_DATE;
+async function patchWorkOrder(id, fields) {
+  try { absorbWorkOrder(await apiFetch(`/maintenance/work-orders/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(fields) })); }
+  catch (err) { alert("Couldn't update work order: " + err.message); }
   render();
 }
-function addWorkOrder() {
+function moveWorkOrder(id, dir) {
+  const wo = findWorkOrder(id); if (!wo) return;
+  const idx = WO_STATUSES.indexOf(wo.status);
+  const next = WO_STATUSES[Math.min(WO_STATUSES.length - 1, Math.max(0, idx + dir))];
+  if (next !== wo.status) patchWorkOrder(id, { status: next });
+}
+async function addWorkOrder() {
   const assetId = document.getElementById("wo-asset").value;
   const a = findAsset(assetId);
   if (!a) { alert("Add an asset first, then open a work order for it."); return; }
@@ -4531,22 +4643,11 @@ function addWorkOrder() {
   if (!title) { alert("Describe the problem or job before submitting."); return; }
   const priority = Number(document.getElementById("wo-priority").value);
   const assigneeId = document.getElementById("wo-assignee").value || null;
-  const typeCode = a.id.startsWith("E") ? "FP" : "TRAN";
-  const id = `LIS.${MAINT_YARD_CODE[a.yard]}.${typeCode}.${woSeq++}`;
-  const wo = { id, assetId: a.id, yard: a.yard, title, priority, status: assigneeId ? "not_started" : "unassigned", assigneeId, issuedDate: CURRENT_DATE, statusChangedDate: CURRENT_DATE };
-  workOrders.push(wo);
-  if (assigneeId) notifyAssignment(wo, assigneeId);
+  try { absorbWorkOrder(await apiFetch("/maintenance/work-orders", { method: "POST", body: JSON.stringify({ assetId: a.id, title, priority, assigneeId }) })); }
+  catch (err) { alert("Couldn't create work order: " + err.message); return; }
   newWOOpen = false; render();
 }
-function reassignWorkOrder(id, userId) {
-  const wo = findWorkOrder(id);
-  if (!wo) return;
-  const prevId = wo.assigneeId;
-  wo.assigneeId = userId || null;
-  if (wo.assigneeId && wo.status === "unassigned") { wo.status = "not_started"; wo.statusChangedDate = CURRENT_DATE; }
-  if (wo.assigneeId && wo.assigneeId !== prevId) notifyAssignment(wo, wo.assigneeId);
-  render();
-}
+function reassignWorkOrder(id, userId) { patchWorkOrder(id, { assigneeId: userId || "" }); }
 
 /* ---------------- Work order shop/invoice attachment ----------------
    For units sent out to a third-party shop — record who did the work and attach their
@@ -4564,10 +4665,9 @@ function saveInvoice(id) {
   const fileInput = document.getElementById(`inv-file-${id}`);
   const file = fileInput && fileInput.files[0];
   const finish = (dataUrl, fileName) => {
-    wo.shopName = shopName;
-    wo.invoice = { fileName: fileName || (wo.invoice ? wo.invoice.fileName : null), dataUrl: dataUrl || (wo.invoice ? wo.invoice.dataUrl : null), amount, uploadedAt: CURRENT_DATE };
+    if (dataUrl && dataUrl.length > 4 * 1024 * 1024 * 1.37) { alert("That file is over 4 MB — take a smaller photo or save it as a PDF."); return; }
     woInvoiceFormId = null;
-    render();
+    patchWorkOrder(id, { shopName, invoiceAmount: amount, invoiceFileName: fileName || undefined, invoiceDataUrl: dataUrl || undefined });
   };
   if (file) {
     const reader = new FileReader();
@@ -4580,7 +4680,16 @@ function saveInvoice(id) {
 function removeInvoice(id) {
   const wo = findWorkOrder(id); if (!wo) return;
   if (!confirm("Remove the shop/invoice info from this work order?")) return;
-  wo.shopName = null; wo.invoice = null; render();
+  patchWorkOrder(id, { invoiceDataUrl: null, invoiceFileName: null });
+}
+// The list leaves the invoice file out (it can be big); fetch the one work order when asked for it.
+async function openInvoiceFile(id) {
+  try {
+    const w = await apiFetch(`/maintenance/work-orders/${encodeURIComponent(id)}`);
+    if (!w.invoice_data_url) { alert("No invoice file on this work order."); return; }
+    const win = window.open("", "_blank");
+    if (win) { win.document.write(w.invoice_data_url.startsWith("data:application/pdf") ? `<iframe src="${w.invoice_data_url}" style="border:0; width:100vw; height:100vh;"></iframe>` : `<img src="${w.invoice_data_url}" style="max-width:100%;" />`); }
+  } catch (err) { alert("Couldn't open invoice: " + err.message); }
 }
 function woShopInvoiceHtml(w) {
   if (woInvoiceFormId === w.id) {
@@ -4592,7 +4701,7 @@ function woShopInvoiceHtml(w) {
     </div></div>`;
   }
   if (w.shopName || w.invoice) {
-    return `<div class="wo-shop">Shop: ${w.shopName || "—"}${w.invoice && w.invoice.amount != null ? ` · ${fmtMoney(w.invoice.amount)}` : ""}${w.invoice && w.invoice.dataUrl ? ` · <a href="${w.invoice.dataUrl}" target="_blank" rel="noopener">View invoice</a>` : ""}
+    return `<div class="wo-shop">Shop: ${w.shopName || "—"}${w.invoice && w.invoice.amount != null ? ` · ${fmtMoney(w.invoice.amount)}` : ""}${w.invoice && (w.invoice.hasFile || w.invoice.dataUrl) ? ` · <span class="link" onclick="openInvoiceFile('${w.id}')">View invoice${w.invoice.fileName ? ` (${htmlEsc(w.invoice.fileName)})` : ""}</span>` : ""}
       ${!isCorp() ? ` · <span class="btn ghost" onclick="startAttachInvoice('${w.id}')">Edit</span><span class="btn ghost" onclick="removeInvoice('${w.id}')">Remove</span>` : ""}
     </div>`;
   }
@@ -4622,7 +4731,7 @@ function deriveWOTitleFromItems(items) {
   if (items.length === 1) return `Failed inspection: ${items[0].item}`;
   return `Failed inspection: ${items[0].item} (+${items.length - 1} more)`;
 }
-function createWorkOrderFromTriage() {
+async function createWorkOrderFromTriage() {
   if (!can('assignWorkOrderItems')) { alert("You don't have access to assign flagged items to work orders."); return; }
   const t = inspectionTriage; if (!t) return;
   const chosen = t.itemsLeft.filter((_, i) => t.selected.has(i));
@@ -4631,39 +4740,29 @@ function createWorkOrderFromTriage() {
   const a = findAsset(insp.assetId);
   const assigneeId = document.getElementById("triage-assignee").value || null;
   const priority = Number(document.getElementById("triage-priority").value);
-  const typeCode = a.id.startsWith("E") ? "FP" : "TRAN";
-  const woId = `LIS.${MAINT_YARD_CODE[a.yard]}.${typeCode}.${woSeq++}`;
-  const wo = {
-    id: woId, assetId: a.id, yard: a.yard, title: deriveWOTitleFromItems(chosen), items: chosen,
-    priority, status: assigneeId ? "not_started" : "unassigned", assigneeId,
-    issuedDate: CURRENT_DATE, statusChangedDate: CURRENT_DATE, fromInspection: insp.id,
-  };
-  workOrders.push(wo);
-  if (assigneeId) notifyAssignment(wo, assigneeId);
-  t.createdIds.push(woId);
+  let wo;
+  try {
+    wo = absorbWorkOrder(await apiFetch("/maintenance/work-orders", { method: "POST", body: JSON.stringify({ assetId: a.id, title: deriveWOTitleFromItems(chosen), items: chosen, priority, assigneeId, fromInspectionId: insp.id }) }));
+  } catch (err) { alert("Couldn't create work order: " + err.message); return; }
+  t.createdIds.push(wo.id);
   t.itemsLeft = t.itemsLeft.filter((_, i) => !t.selected.has(i));
   t.selected = new Set(t.itemsLeft.map((_, i) => i));
   if (!t.itemsLeft.length) inspectionTriage = null;
   render();
 }
-function finishTriageUnassigned() {
+async function finishTriageUnassigned() {
   if (!can('assignWorkOrderItems')) { alert("You don't have access to assign flagged items to work orders."); return; }
   const t = inspectionTriage; if (!t) return;
   if (!t.itemsLeft.length) { inspectionTriage = null; render(); return; }
   const insp = inspections.find(i => i.id === t.inspectionId);
   const a = findAsset(insp.assetId);
-  const typeCode = a.id.startsWith("E") ? "FP" : "TRAN";
-  const woId = `LIS.${MAINT_YARD_CODE[a.yard]}.${typeCode}.${woSeq++}`;
-  const wo = {
-    id: woId, assetId: a.id, yard: a.yard, title: deriveWOTitleFromItems(t.itemsLeft), items: t.itemsLeft.slice(),
-    priority: t.itemsLeft.length >= 2 ? 5 : 4, status: "unassigned", assigneeId: null,
-    issuedDate: CURRENT_DATE, statusChangedDate: CURRENT_DATE, fromInspection: insp.id,
-  };
-  workOrders.push(wo);
+  try {
+    absorbWorkOrder(await apiFetch("/maintenance/work-orders", { method: "POST", body: JSON.stringify({ assetId: a.id, title: deriveWOTitleFromItems(t.itemsLeft), items: t.itemsLeft.slice(), priority: t.itemsLeft.length >= 2 ? 5 : 4, fromInspectionId: insp.id }) }));
+  } catch (err) { alert("Couldn't create work order: " + err.message); return; }
   inspectionTriage = null;
   render();
 }
-function addPMSchedule() {
+async function addPMSchedule() {
   const assetId = document.getElementById("pm-asset").value;
   const a = findAsset(assetId);
   if (!a) { alert("Add an asset first, then schedule PM for it."); return; }
@@ -4671,7 +4770,8 @@ function addPMSchedule() {
   if (!name) { alert("Name the service (e.g. \"250-Hour Service\")."); return; }
   const trigger = document.getElementById("pm-trigger").value;
   const interval = Number(document.getElementById("pm-interval").value) || 1;
-  pmSchedules.push({ id: "PM-" + (pmSeq++), assetId: a.id, name, trigger, interval, lastDoneMeter: trigger === "meter" ? a.meter : null, lastDoneDate: trigger === "calendar" ? CURRENT_DATE : null });
+  try { pmSchedules.push(mapApiPm(await apiFetch("/maintenance/pm", { method: "POST", body: JSON.stringify({ assetId: a.id, name, trigger, interval }) }))); }
+  catch (err) { alert("Couldn't add schedule: " + err.message); return; }
   newPMOpen = false; render();
 }
 
@@ -4919,7 +5019,7 @@ function addTemplateCategory() {
   if (!INSPECTION_TEMPLATES[type]) INSPECTION_TEMPLATES[type] = {};
   if (INSPECTION_TEMPLATES[type][name] !== undefined) { alert("That category already exists for this asset type."); return; }
   INSPECTION_TEMPLATES[type][name] = [];
-  render();
+  saveInspectionTemplates(); render();
 }
 function removeTemplateCategory(catIdx) {
   const type = templateBuilderType;
@@ -4927,7 +5027,7 @@ function removeTemplateCategory(catIdx) {
   const items = INSPECTION_TEMPLATES[type][category] || [];
   if (items.length && !confirm(`"${category}" has ${items.length} item${items.length === 1 ? "" : "s"}. Remove the whole category?`)) return;
   delete INSPECTION_TEMPLATES[type][category];
-  render();
+  saveInspectionTemplates(); render();
 }
 function addTemplateItem(catIdx) {
   const type = templateBuilderType;
@@ -4936,13 +5036,13 @@ function addTemplateItem(catIdx) {
   const name = input.value.trim();
   if (!name) return;
   INSPECTION_TEMPLATES[type][category].push(name);
-  render();
+  saveInspectionTemplates(); render();
 }
 function removeTemplateItem(catIdx, itemIdx) {
   const type = templateBuilderType;
   const category = Object.keys(INSPECTION_TEMPLATES[type])[catIdx];
   INSPECTION_TEMPLATES[type][category].splice(itemIdx, 1);
-  render();
+  saveInspectionTemplates(); render();
 }
 function viewTemplateBuilder() {
   const type = templateBuilderType;
@@ -4979,12 +5079,10 @@ function addCustomChecklistItem(assetId) {
   const val = input.value.trim();
   if (!val) return;
   const a = findAsset(assetId);
-  a.customItems = a.customItems || [];
-  a.customItems.push(val);
-  render();
+  patchAsset(assetId, { customItems: [...(a.customItems || []), val] });
 }
-function removeCustomChecklistItem(assetId, idx) { const a = findAsset(assetId); a.customItems.splice(idx, 1); render(); }
-function submitInspection() {
+function removeCustomChecklistItem(assetId, idx) { const a = findAsset(assetId); patchAsset(assetId, { customItems: (a.customItems || []).filter((_, i) => i !== idx) }); }
+async function submitInspection() {
   const a = findAsset(inspectionFormAsset);
   if (!a) { alert("Pick an asset first."); return; }
   const checklist = inspectionChecklist(a);
@@ -4995,15 +5093,17 @@ function submitInspection() {
     note: document.getElementById(`insp-note-${i}`).value.trim() || null,
   }));
   const meterValue = Number(document.getElementById("insp-meter").value) || a.meter;
-  const completedBy = document.getElementById("insp-by").value.trim() || "Unassigned";
-  const score = scoreResults(results);
-  const id = "INS-" + (inspectionSeq++);
-  inspections.unshift({ id, assetId: a.id, yard: a.yard, date: CURRENT_DATE, meterValue, service: "Daily", type: inspectionTypeLabel(), completedBy, results, score });
-  a.meter = meterValue;
+  const completedBy = document.getElementById("insp-by").value.trim() || null;
+  let insp;
+  try {
+    insp = mapApiInspection(await apiFetch("/maintenance/inspections", { method: "POST", body: JSON.stringify({ assetId: a.id, meterValue, completedBy, results, service: "Daily", type: inspectionTypeLabel(), date: CURRENT_DATE }) }));
+  } catch (err) { alert("Couldn't save inspection: " + err.message); return; }
+  inspections.unshift(insp);
+  if (meterValue >= a.meter) a.meter = meterValue;
   const failed = results.filter(r => !r.pass);
   inspectionFormAsset = null;
-  inspectionDetailId = id;
-  if (failed.length) startInspectionTriage(id, failed);
+  inspectionDetailId = insp.id;
+  if (failed.length) startInspectionTriage(insp.id, failed);
   render();
 }
 function viewInspectionDetailPanel(insp) {
@@ -6092,7 +6192,7 @@ function renderTransferLedgerTable(rows) {
   return `<table><thead><tr><th>Transfer</th><th>Date</th><th>From → To</th><th>Commodity</th><th class="num">Weight</th><th>Margin</th><th class="num">Transfer $</th><th class="num">Freight</th><th>Reconciled</th><th></th></tr></thead>
     <tbody>${rows.slice().reverse().map(x => {
       const freight = freightTickets.find(f => f.ticketId === x.sellTicketId);
-      return `<tr><td class="mono">${x.id}</td><td>${x.date}</td><td>${yardName(x.fromYard)} → ${yardName(x.toYard)}</td><td>${commodityName(x.commodity)}</td><td class="num">${fmtQty(x.commodity, x.netWeight)}</td><td>${marginLabel(x.marginBasis || "pct", x.marginValue != null ? x.marginValue : yardTransferMarginPct)}</td><td class="num">${fmtMoney(x.total)}</td><td class="num">${freight ? fmtMoney(freight.cost) : "—"}</td><td>${x.status === "Reconciled" ? x.reconciledDate : "—"}</td><td>${x.status === "Reconciled" ? "" : `<button class="btn small" onclick="reconcileYardTransfer('${x.id}')">Reconcile</button>`}</td></tr>`;
+      return `<tr><td class="mono">${x.id}</td><td>${x.date}</td><td>${yardName(x.fromYard)} → ${yardName(x.toYard)}</td><td>${commodityName(x.commodity)}</td><td class="num">${fmtQty(x.commodity, x.netWeight)}</td><td>${marginLabel(x.marginBasis || "pct", x.marginValue != null ? x.marginValue : yardTransferMarginPct)}</td><td class="num">${fmtMoney(x.total)}${x.marginDollars != null ? `<div class="footnote" style="margin:2px 0 0;">${fmtMoney(x.marginDollars)} margin to ${yardName(x.fromYard)}</div>` : ""}</td><td class="num">${freight ? fmtMoney(freight.cost) : "—"}</td><td>${x.status === "Reconciled" ? `${x.reconciledDate}${x.reconciledBy ? ` · ${htmlEsc(x.reconciledBy)}` : ""}` : x.status === "Voided" ? `<span class="badge voided">Voided</span>` : "—"}</td><td style="display:flex; gap:6px; flex-wrap:wrap;">${x.status === "Open" && can("payRemittances") ? `<button class="btn small" onclick="reconcileYardTransfer('${x.id}')">Reconcile</button>` : ""}${x.status === "Open" && can("voidTickets") ? `<button class="btn ghost small" onclick="voidYardTransfer('${x.id}')">Void</button>` : ""}</td></tr>`;
     }).join("")}</tbody></table>`;
 }
 // A yard transfer's two legs are real tickets (see "Yard Transfers" above) but they aren't a real
@@ -7130,7 +7230,7 @@ function updateContractQtyLabels() {
   const cl = document.getElementById("ct-committed-label"); if (cl) cl.textContent = `Committed quantity (${u})`;
   const sl = document.getElementById("ct-shipped-label"); if (sl) sl.textContent = `Already shipped (${u})`;
 }
-function addContract() {
+async function addContract() {
   const customerId = document.getElementById("ct-customer").value;
   const commodity = document.getElementById("ct-commodity").value;
   const yard = document.getElementById("ct-yard").value;
@@ -7148,8 +7248,9 @@ function addContract() {
     alert(`Contract # "${id}" is already in use — enter a different number.`);
     return;
   }
+  try { contracts.push(mapApiContract(await apiFetch("/contracts", { method: "POST", body: JSON.stringify({ id, customerId, commodity, yard, committedQty, shippedQty, endDate, notes, terms }) }))); }
+  catch (err) { alert("Couldn't add contract: " + err.message); return; }
   contractSeq++;
-  contracts.push({ id, customerId, commodity, yard, committedQty, shippedQty, endDate, notes, terms });
   render();
 }
 function promptRenameContract(id) {
@@ -7159,7 +7260,7 @@ function promptRenameContract(id) {
   if (input === null) return;
   renameContract(id, input);
 }
-function renameContract(oldId, newId) {
+async function renameContract(oldId, newId) {
   const c = findContract(oldId);
   if (!c) return;
   const trimmed = (newId || "").trim();
@@ -7168,11 +7269,13 @@ function renameContract(oldId, newId) {
     alert(`Contract # "${trimmed}" is already in use by another contract.`);
     return;
   }
+  try { await apiFetch(`/contracts/${encodeURIComponent(oldId)}/rename`, { method: "PATCH", body: JSON.stringify({ newId: trimmed }) }); }
+  catch (err) { alert("Couldn't rename: " + err.message); return; }
   c.id = trimmed;
   tickets.forEach(t => { if (t.contractId === oldId) t.contractId = trimmed; });
   render();
 }
-function logContractShipment(id) {
+async function logContractShipment(id) {
   const c = findContract(id);
   if (!c) return;
   const remaining = Math.max(0, c.committedQty - c.shippedQty);
@@ -7180,7 +7283,8 @@ function logContractShipment(id) {
   if (input === null) return;
   const qty = parseFloat(input) || 0;
   if (qty <= 0) return;
-  c.shippedQty = Math.min(c.committedQty, c.shippedQty + qty);
+  try { Object.assign(c, mapApiContract(await apiFetch(`/contracts/${encodeURIComponent(id)}/log-shipment`, { method: "POST", body: JSON.stringify({ qty }) }))); }
+  catch (err) { alert("Couldn't log shipment: " + err.message); }
   render();
 }
 function viewDocuments() {

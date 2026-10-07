@@ -273,6 +273,143 @@ async function main() {
   const deactTrailer = await req("PATCH", `/trailers/${trailer.body.id}`, { token, body: { active: false, carrierId: "" } });
   assert(deactTrailer.status === 200 && deactTrailer.body.active === false && deactTrailer.body.carrier_id === null, "a trailer can be deactivated and its carrier cleared");
 
+  // ---- Maintenance ----
+  const assetId = `E${stamp % 1000}`;
+  const asset = await req("POST", "/maintenance/assets", { token, body: { id: assetId.toLowerCase(), yard: "COLBY", year: 2019, make: "Caterpillar", model: "336", type: "Excavator", meterType: "Hours", meter: 4200 } });
+  assert(asset.status === 201 && asset.body.id === assetId && asset.body.status === "up", "an asset can be created (id upper-cased)");
+  const dupeAsset = await req("POST", "/maintenance/assets", { token, body: { id: assetId, yard: "COLBY", type: "Excavator" } });
+  assert(dupeAsset.status === 409, "duplicate asset id is rejected");
+  const down = await req("PATCH", `/maintenance/assets/${assetId}`, { token, body: { status: "down" } });
+  assert(down.status === 200 && down.body.status === "down", "asset can be marked down");
+  const badStatus = await req("PATCH", `/maintenance/assets/${assetId}`, { token, body: { status: "sideways" } });
+  assert(badStatus.status === 400, "an unknown asset status is rejected");
+
+  const pm = await req("POST", "/maintenance/pm", { token, body: { assetId, name: "250-Hour Service", trigger: "meter", interval: 250 } });
+  assert(pm.status === 201 && parseFloat(pm.body.last_done_meter) === 4200, "a meter PM schedule starts from the asset's current meter");
+  const gen = await req("POST", `/maintenance/pm/${pm.body.id}/generate`, { token });
+  assert(gen.status === 201 && /^LIS\.CO\.FP\.\d+$/.test(gen.body.workOrder.id) && gen.body.workOrder.status === "not_started", "generating from a PM opens a not-started work order with a LIS.yard.FP.n id: " + gen.body.workOrder.id);
+
+  const wo = await req("POST", "/maintenance/work-orders", { token, body: { assetId, title: "Hydraulic hose leak", priority: 5 } });
+  assert(wo.status === 201 && wo.body.status === "unassigned" && wo.body.assignee_id === null, "a work order with no assignee starts Unassigned");
+  const assign = await req("PATCH", `/maintenance/work-orders/${wo.body.id}`, { token, body: { assigneeId: opLogin.body.user.id } });
+  assert(assign.status === 200 && assign.body.status === "not_started" && assign.body.assignee_name === "Demo Scale Operator", "assigning moves it to Not Started and names the assignee");
+  const inbox = await req("GET", "/notifications", { token: opToken });
+  assert(inbox.status === 200 && inbox.body.some((n) => n.ref_id === wo.body.id && n.read === false), "the assignee gets a notification");
+  const readAll = await req("PATCH", "/notifications/read-all", { token: opToken });
+  assert(readAll.status === 200 && readAll.body.marked >= 1, "notifications can be marked read");
+  const otherInbox = await req("GET", "/notifications", { token });
+  assert(!otherInbox.body.some((n) => n.ref_id === wo.body.id), "notifications are private to the assignee");
+  const advance = await req("PATCH", `/maintenance/work-orders/${wo.body.id}`, { token: opToken, body: { status: "in_progress" } });
+  assert(advance.status === 200 && advance.body.status === "in_progress", "the assignee (a scale operator) can advance their own work order");
+  const invoice = await req("PATCH", `/maintenance/work-orders/${wo.body.id}`, { token, body: { shopName: "Colby Diesel", invoiceAmount: 412.5, invoiceFileName: "inv.png", invoiceDataUrl: "data:image/png;base64,iVBORw0KGgo=" } });
+  assert(invoice.status === 200 && invoice.body.shop_name === "Colby Diesel" && parseFloat(invoice.body.invoice_amount) === 412.5, "a shop invoice can be attached");
+  const woList = await req("GET", "/maintenance/work-orders?yard=COLBY", { token });
+  const listed = woList.body.find((w) => w.id === wo.body.id);
+  assert(listed && listed.has_invoice_file === true && listed.invoice_data_url === undefined, "the list reports an invoice file without shipping it");
+  const complete = await req("PATCH", `/maintenance/work-orders/${wo.body.id}`, { token, body: { status: "complete" } });
+  assert(complete.status === 200 && complete.body.completed_at && complete.body.completed_by_name === "Andy Bush", "completing records when and by whom");
+  const badWoStatus = await req("PATCH", `/maintenance/work-orders/${wo.body.id}`, { token, body: { status: "done" } });
+  assert(badWoStatus.status === 400, "an unknown work order status is rejected");
+
+  const results = [{ category: "Safety", item: "Backup Alarm", pass: false, note: "Not working" }, { category: "Fluids", item: "Engine Oil", pass: true, note: null }, { category: "Fluids", item: "Fuel", pass: true, note: null }];
+  const insp = await req("POST", "/maintenance/inspections", { token: opToken, body: { assetId, meterValue: 4250, results, completedBy: "R. Ortiz" } });
+  assert(insp.status === 201 && /^INS-\d+$/.test(insp.body.id) && parseFloat(insp.body.score) === 66.7, "an inspection is scored (2 of 3 = 66.7%)");
+  const assetAfter = await req("GET", "/maintenance/assets?yard=COLBY&includeInactive=true", { token });
+  assert(parseFloat(assetAfter.body.find((a) => a.id === assetId).meter) === 4250, "the inspection's meter reading updates the asset");
+  const triageDenied = await req("POST", "/maintenance/work-orders", { token: opToken, body: { assetId, title: "Failed inspection: Backup Alarm", items: [results[0]], fromInspectionId: insp.body.id } });
+  assert(triageDenied.status === 403, "turning failed items into a work order needs assignWorkOrderItems");
+  const triageOk = await req("POST", "/maintenance/work-orders", { token, body: { assetId, title: "Failed inspection: Backup Alarm", items: [results[0]], priority: 4, fromInspectionId: insp.body.id } });
+  assert(triageOk.status === 201 && triageOk.body.from_inspection_id === insp.body.id && triageOk.body.items.length === 1, "an admin can create a work order from failed inspection items");
+  const badResults = await req("POST", "/maintenance/inspections", { token, body: { assetId, results: [{ item: "x" }] } });
+  assert(badResults.status === 400, "inspection results need pass true/false per item");
+
+  // ---- Yard transfers ----
+  // Give HAYS some HMS2 at a known cost, then transfer part of it to RC at 6% over HAYS master price.
+  const stock = await req("POST", "/tickets", { token, body: { type: "buy", date: "2026-10-02", yard: "HAYS", vendorId: hendricks.id, commodity: "HMS2", netWeight: 10000, price: 0.08, payment: "Check" } });
+  assert(stock.status === 201, "stocked HAYS with HMS2 for the transfer test");
+  const haysBefore = (await req("GET", "/inventory/balances?yard=HAYS&commodity=HMS2", { token })).body[0];
+  const rcBefore = (await req("GET", "/inventory/balances?yard=RC&commodity=HMS2", { token })).body[0] || { qty: "0", avg_cost: "0" };
+  const preview = await req("GET", "/transfers/price?commodity=HMS2&fromYard=HAYS&marginBasis=pct&marginValue=6", { token });
+  const hms2 = commodities.body.find((c) => c.code === "HMS2");
+  const expectedPrice = Math.round(Math.round(parseFloat(hms2.master_price) * 0.97 * 1000) / 1000 * 1.06 * 1000) / 1000;
+  assert(preview.status === 200 && Math.abs(preview.body.price - expectedPrice) < 0.0005, `transfer price = HAYS master price (×0.97) + 6% = ${expectedPrice}`);
+  const tooMuch = await req("POST", "/transfers", { token, body: { fromYard: "HAYS", toYard: "RC", commodity: "HMS2", netWeight: parseFloat(haysBefore.qty) + 1, marginBasis: "pct", marginValue: 6 } });
+  assert(tooMuch.status === 409, "can't transfer more than is on hand");
+  const sameYard = await req("POST", "/transfers", { token, body: { fromYard: "HAYS", toYard: "HAYS", commodity: "HMS2", netWeight: 10, marginBasis: "pct", marginValue: 6 } });
+  assert(sameYard.status === 400, "a yard can't transfer to itself");
+  const xfer = await req("POST", "/transfers", { token, body: { fromYard: "HAYS", toYard: "RC", commodity: "HMS2", netWeight: 4000, marginBasis: "pct", marginValue: 6, notes: "smoke", date: "2026-10-02" } });
+  assert(xfer.status === 201 && /^YT-\d+$/.test(xfer.body.id) && xfer.body.status === "Open", "a transfer is created: " + xfer.body.id);
+  assert(Math.abs(parseFloat(xfer.body.price) - expectedPrice) < 0.0005 && Math.abs(parseFloat(xfer.body.total) - 4000 * expectedPrice) < 0.01, "transfer priced at master + margin");
+  const expectedMargin = Math.round((expectedPrice - parseFloat(haysBefore.avg_cost)) * 4000 * 100) / 100;
+  assert(Math.abs(parseFloat(xfer.body.margin_dollars) - expectedMargin) < 0.011, `margin to the sending yard = (price − HAYS avg cost) × weight = ${expectedMargin}`);
+  const sellLeg = await req("GET", `/tickets/${xfer.body.sell_ticket_id}`, { token });
+  const buyLeg = await req("GET", `/tickets/${xfer.body.buy_ticket_id}`, { token });
+  assert(sellLeg.body.yard === "HAYS" && sellLeg.body.type === "sell" && sellLeg.body.kind === "transfer" && sellLeg.body.linked_ticket_id === buyLeg.body.id && sellLeg.body.payment === "Internal Transfer", "sell leg at HAYS, tagged transfer, linked to its twin");
+  assert(buyLeg.body.yard === "RC" && buyLeg.body.type === "buy" && buyLeg.body.paid === true && buyLeg.body.status === "Closed" && Math.abs(parseFloat(buyLeg.body.cogs_per_lb || 0)) === 0, "buy leg at RC, marked paid (no cash moves between yards)");
+  assert(Math.abs(parseFloat(sellLeg.body.cogs_per_lb) - parseFloat(haysBefore.avg_cost)) < 0.0005, "sell leg snapshots HAYS' average cost as COGS");
+  const haysAfter = (await req("GET", "/inventory/balances?yard=HAYS&commodity=HMS2", { token })).body[0];
+  const rcAfter = (await req("GET", "/inventory/balances?yard=RC&commodity=HMS2", { token })).body[0];
+  assert(Math.abs(parseFloat(haysAfter.qty) - (parseFloat(haysBefore.qty) - 4000)) < 0.001, "HAYS on-hand dropped by the transfer weight");
+  assert(Math.abs(parseFloat(rcAfter.qty) - (parseFloat(rcBefore.qty) + 4000)) < 0.001, "RC on-hand rose by the transfer weight");
+  const rcExpectedAvg = (parseFloat(rcBefore.qty) * parseFloat(rcBefore.avg_cost) + 4000 * expectedPrice) / (parseFloat(rcBefore.qty) + 4000);
+  assert(Math.abs(parseFloat(rcAfter.avg_cost) - rcExpectedAvg) < 0.0005, "RC's average cost blends in at the transfer price");
+  const payLeg = await req("POST", "/remittances", { token, body: { payee: "x", method: "ACH", account: "RC", date: "2026-10-02", ticketIds: [buyLeg.body.id] } });
+  assert(payLeg.status === 409, "the transfer buy leg can't be paid by remittance (already paid)");
+  const opRecon = await req("POST", `/transfers/${xfer.body.id}/reconcile`, { token: opToken });
+  assert(opRecon.status === 403, "scale operator can't reconcile a transfer");
+  const voidX = await req("POST", `/transfers/${xfer.body.id}/void`, { token, body: { reason: "wrong weight" } });
+  assert(voidX.status === 200 && voidX.body.status === "Voided", "an open transfer can be voided");
+  const haysVoid = (await req("GET", "/inventory/balances?yard=HAYS&commodity=HMS2", { token })).body[0];
+  const rcVoid = (await req("GET", "/inventory/balances?yard=RC&commodity=HMS2", { token })).body[0];
+  assert(Math.abs(parseFloat(haysVoid.qty) - parseFloat(haysBefore.qty)) < 0.001 && Math.abs(parseFloat(rcVoid.qty) - parseFloat(rcBefore.qty)) < 0.001, "voiding puts both yards' on-hand back");
+  const sellVoided = await req("GET", `/tickets/${xfer.body.sell_ticket_id}`, { token });
+  assert(sellVoided.body.status === "Voided", "both legs are voided with the transfer");
+  const xfer2 = await req("POST", "/transfers", { token, body: { fromYard: "HAYS", toYard: "RC", commodity: "HMS2", netWeight: 1000, marginBasis: "perton", marginValue: 10, date: "2026-10-02" } });
+  assert(xfer2.status === 201 && Math.abs(parseFloat(xfer2.body.price) - (Math.round(parseFloat(hms2.master_price) * 0.97 * 1000) / 1000 + 10 / 2000)) < 0.0005, "a $/net-ton margin adds margin ÷ 2000 per lb");
+  const recon = await req("POST", `/transfers/${xfer2.body.id}/reconcile`, { token });
+  assert(recon.status === 200 && recon.body.status === "Reconciled" && recon.body.reconciled_by === me.body.id, "a transfer can be reconciled");
+  const voidRecon = await req("POST", `/transfers/${xfer2.body.id}/void`, { token, body: { reason: "x" } });
+  assert(voidRecon.status === 409, "a reconciled transfer can't be voided");
+  const byYard = await req("GET", "/transfers?yard=RC", { token });
+  assert(byYard.body.some((x) => x.id === xfer2.body.id), "transfers can be listed by yard (either side)");
+
+  // ---- Contracts & purchase orders ----
+  const custList = await req("GET", "/customers", { token });
+  const interstate = custList.body.find((c) => c.name === "Interstate Recycling Co.");
+  const ctId = `CT-SMOKE-${stamp}`;
+  const ct = await req("POST", "/contracts", { token, body: { id: ctId, customerId: interstate.id, commodity: "HMS2", yard: "COLBY", committedQty: 50000, endDate: "2026-12-31", terms: "net30", notes: "smoke" } });
+  assert(ct.status === 201 && ct.body.customer_name === "Interstate Recycling Co." && parseFloat(ct.body.shipped_qty) === 0, "a contract can be created with its customer name");
+  const ctDupe = await req("POST", "/contracts", { token, body: { id: ctId, customerId: interstate.id, commodity: "HMS2", yard: "COLBY", committedQty: 1, endDate: "2026-12-31" } });
+  assert(ctDupe.status === 409, "duplicate contract number is rejected");
+  const ctBadTerms = await req("POST", "/contracts", { token, body: { id: ctId + "b", customerId: interstate.id, commodity: "HMS2", yard: "COLBY", committedQty: 1, endDate: "2026-12-31", terms: "net45" } });
+  assert(ctBadTerms.status === 400, "unknown payment terms are rejected");
+  const ctSell = await req("POST", "/tickets", { token, body: { type: "sell", date: "2026-10-02", yard: "COLBY", customerId: interstate.id, commodity: "HMS2", netWeight: 12000, price: 0.12, payment: "ACH", contractId: ctId } });
+  assert(ctSell.status === 201 && ctSell.body.contract_id === ctId, "a sell ticket can draw against a contract");
+  let ctNow = (await req("GET", "/contracts?yard=COLBY", { token })).body.find((c) => c.id === ctId);
+  assert(parseFloat(ctNow.shipped_qty) === 12000, "the ticket's weight posts to the contract's shipped quantity");
+  const ctLog = await req("POST", `/contracts/${ctId}/log-shipment`, { token, body: { qty: 500 } });
+  assert(ctLog.status === 200 && parseFloat(ctLog.body.shipped_qty) === 12500, "a shipment can be logged outside the ticket flow");
+  const ctRename = await req("PATCH", `/contracts/${ctId}/rename`, { token, body: { newId: ctId + "-R" } });
+  assert(ctRename.status === 200 && ctRename.body.id === ctId + "-R", "a contract can be renamed");
+  const ctSellAfter = await req("GET", `/tickets/${ctSell.body.id}`, { token });
+  assert(ctSellAfter.body.contract_id === ctId + "-R", "renaming carries forward to the linked ticket");
+  const ctEdit = await req("PATCH", `/contracts/${ctId}-R`, { token, body: { committedQty: 60000, terms: null } });
+  assert(ctEdit.status === 200 && parseFloat(ctEdit.body.committed_qty) === 60000 && ctEdit.body.terms === null, "committed quantity and terms can be edited (terms cleared to customer default)");
+
+  const poId = `PO-SMOKE-${stamp}`;
+  const po = await req("POST", "/purchase-orders", { token, body: { id: poId, vendorId: hendricks.id, commodity: "HMS2", yard: "COLBY", committedQty: 20000, endDate: "2026-12-31" } });
+  assert(po.status === 201 && po.body.vendor_name === "Dale Hendricks", "a purchase order can be created with its vendor name");
+  const poBuy = await req("POST", "/tickets", { token, body: { type: "buy", date: "2026-10-02", yard: "COLBY", vendorId: hendricks.id, commodity: "HMS2", netWeight: 3000, price: 0.09, payment: "Check", poId } });
+  assert(poBuy.status === 201 && poBuy.body.po_id === poId, "a buy ticket can be linked to a PO");
+  const poNow = (await req("GET", "/purchase-orders?yard=COLBY", { token })).body.find((p) => p.id === poId);
+  assert(parseFloat(poNow.received_qty) === 3000, "the ticket's weight posts to the PO's received quantity");
+  const poLog = await req("POST", `/purchase-orders/${poId}/log-receipt`, { token, body: { qty: 250 } });
+  assert(poLog.status === 200 && parseFloat(poLog.body.received_qty) === 3250, "a receipt can be logged outside the ticket flow");
+  const poRename = await req("PATCH", `/purchase-orders/${poId}/rename`, { token, body: { newId: poId + "-R" } });
+  assert(poRename.status === 200 && poRename.body.id === poId + "-R", "a purchase order can be renamed");
+  const poBadVendor = await req("POST", "/purchase-orders", { token, body: { id: poId + "x", vendorId: "nope", commodity: "HMS2", yard: "COLBY", committedQty: 1, endDate: "2026-12-31" } });
+  assert(poBadVendor.status === 400, "a PO with an unknown vendor is rejected");
+
   // Permission enforcement: a scale operator can post tickets but cannot cut checks or touch bank
   // accounts. Uses the demo-only operator seeded by db/seed.js.
   const opLogin = await req("POST", "/auth/login", { body: { email: "scale.demo@example.com", password: "changeme123" } });

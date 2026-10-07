@@ -110,7 +110,26 @@ individual grant) includes it; everything else is open to any logged-in user.
   history in `src/public/data/`.
 - `PATCH /tickets/:id/trailer` — set which trailer hauled a load, any time.
 - `GET /settings`, `PATCH /settings` (`manageUsers`) — app-wide settings (`app_settings` table):
-  trailer loads goal, tons targets by type.
+  trailer loads goal, tons targets by type, inspection checklist templates.
+- Maintenance (`/maintenance/...`): `GET/POST/PATCH assets` (fleet number is the id; status up/down,
+  meter, per-unit custom checklist items); `GET/POST/PATCH pm` + `POST pm/:id/generate` (opens a
+  work order, resets the schedule); `GET/POST/PATCH work-orders` (ids `LIS.<yard>.<FP|TRAN>.<n>`;
+  status board unassigned → not_started → in_progress → waiting → review → complete; assigning
+  notifies the assignee; shop invoice as a ≤4 MB data URL, left out of the list); `GET/POST
+  inspections` (`INS-<n>`, scored, updates the asset meter). Creating a work order from failed
+  inspection items (`fromInspectionId`) needs `assignWorkOrderItems`.
+- `GET /notifications` (own inbox), `PATCH /notifications/read-all`, `PATCH /notifications/:id`.
+- Yard transfers: `GET/POST /transfers`, `GET /transfers/price` (preview), `POST /transfers/:id/reconcile`
+  (`payRemittances`), `POST /transfers/:id/void` (`voidTickets`; both legs voided, material goes
+  back). A transfer is a SELL at the sending yard at master price (× that yard's multiplier) +
+  margin (`pct` | `perlb` | `perton`) and a BUY at the receiving yard at the same price, both
+  `kind = 'transfer'` and linked (`tickets.transfer_id`, `linked_ticket_id`). The sending yard books
+  `margin_dollars = (price − its average cost) × weight`; the buy leg is marked paid (no cash moves
+  between yard accounts). `src/transferService.js`.
+- Contracts: `GET/POST/PATCH /contracts`, `POST /contracts/:id/log-shipment`, `PATCH /contracts/:id/rename`.
+  Purchase orders: `GET/POST/PATCH /purchase-orders`, `POST /purchase-orders/:id/log-receipt`,
+  `PATCH /purchase-orders/:id/rename`. Sell tickets with `contractId` / buy tickets with `poId` post
+  their weight to shipped / received automatically.
 
 Every action on a ticket writes an `audit_log` row (`src/audit.js`); the ticket timeline is those rows.
 
