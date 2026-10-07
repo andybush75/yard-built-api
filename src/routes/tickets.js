@@ -53,6 +53,20 @@ router.post("/", requireAuth, async (req, res) => {
   try {
     await client.query("BEGIN");
 
+    // A linked vendor/customer must be a real row. Its name is snapshotted onto the ticket when the
+    // caller didn't send one, so a ticket always carries a party_name even if the record is renamed.
+    let snapshotName = partyName || null;
+    if (vendorId) {
+      const { rows } = await client.query("SELECT name FROM vendors WHERE id = $1", [vendorId]);
+      if (!rows.length) { await client.query("ROLLBACK"); return res.status(400).json({ error: "vendorId does not match any vendor" }); }
+      snapshotName = snapshotName || rows[0].name;
+    }
+    if (customerId) {
+      const { rows } = await client.query("SELECT name FROM customers WHERE id = $1", [customerId]);
+      if (!rows.length) { await client.query("ROLLBACK"); return res.status(400).json({ error: "customerId does not match any customer" }); }
+      snapshotName = snapshotName || rows[0].name;
+    }
+
     let ticketId = id;
     if (!ticketId) {
       const seqName = type === "buy" ? "ticket_buy_seq" : "ticket_sell_seq";
@@ -105,7 +119,7 @@ router.post("/", requireAuth, async (req, res) => {
        RETURNING *`,
       [
         ticketId, type, date, yard, vendorId || null, customerId || null,
-        partyName || null, holdDesc || null, commodity, tier || null,
+        snapshotName, holdDesc || null, commodity, tier || null,
         netWeightNum, priceNum, total, payment, type === "buy" ? "Closed" : null,
         cogsPerLb, contractId || null, poId || null, shipmentId || null,
       ]

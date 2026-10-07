@@ -1131,9 +1131,12 @@ function can(key) { return hasPermission(currentUserId, key); }
    Real login against the deployed yard-built-api (Railway/Postgres). Once authenticated,
    bootstrapFromApi() overwrites the local commodities/inventoryByYard/inventoryLedger/tickets
    globals with real data fetched from the database, so every existing view function that already
-   reads those same variables shows live numbers without needing to be rewritten. Vendors,
-   customers, contracts, POs, maintenance, dispatch, box rent, KBI, and everything else not yet
-   covered by the backend stays on this file's local mock data for now — that's the next increment. */
+   reads those same variables shows live numbers without needing to be rewritten. Vendors and
+   customers are live too: the lists load from the database and every add/edit is saved through
+   the API (createParty / patchParty), and tickets carry the real vendor_id / customer_id. The demo
+   vendors/customers arrays below only exist until login. Contracts, POs, maintenance, dispatch,
+   box rent, KBI, price-list sends (incl. lastSent), and everything else not yet covered by the
+   backend stays on this file's local mock data for now — that's the next increment. */
 const API_BASE = "https://yard-built-api-production.up.railway.app";
 let authToken = null;
 let apiUser = null;
@@ -1170,19 +1173,62 @@ function mapApiTicket(t) {
     contractId: t.contract_id, poId: t.po_id, shipmentId: t.shipment_id, holdDescription: t.hold_desc,
   };
 }
+function mapApiVendor(v) {
+  return {
+    id: v.id, name: v.name, phone: v.phone || "", email: v.email || "", tier: v.tier, notes: v.notes || "",
+    smartphone: !!v.smartphone, onPriceList: !!v.on_price_list, autoSend: v.auto_send || "off",
+    lastSent: v.last_sent ? v.last_sent.slice(0, 10) : null, created: v.created_at ? v.created_at.slice(0, 10) : null,
+  };
+}
+function mapApiCustomer(c) {
+  return {
+    id: c.id, name: c.name, phone: c.phone || "", email: c.email || "", tier: c.tier, notes: c.notes || "",
+    freightPerLb: parseFloat(c.freight_per_lb) || 0, onPriceList: !!c.on_price_list, autoSend: c.auto_send || "off",
+    lastSent: c.last_sent ? c.last_sent.slice(0, 10) : null, terms: c.terms || "cod", address: c.address || "",
+    businessExempt: !!c.business_exempt, created: c.created_at ? c.created_at.slice(0, 10) : null,
+  };
+}
+// Creates a vendor or customer in the database and adds it to the local list. Field names match
+// what POST /vendors and POST /customers accept.
+async function createParty(kind, fields) {
+  const row = await apiFetch(kind === "vendor" ? "/vendors" : "/customers", { method: "POST", body: JSON.stringify(fields) });
+  const rec = kind === "vendor" ? mapApiVendor(row) : mapApiCustomer(row);
+  (kind === "vendor" ? vendors : customers).push(rec);
+  return rec;
+}
+// Saves one or more changed fields on a vendor/customer. The local record is updated first so the
+// screen responds immediately; if the save fails the change is rolled back and the user told.
+async function patchParty(kind, id, fields) {
+  const rec = kind === "vendor" ? findVendor(id) : findCustomer(id);
+  if (!rec) return;
+  const before = {};
+  Object.keys(fields).forEach(k => { before[k] = rec[k]; rec[k] = fields[k]; });
+  render();
+  try {
+    await apiFetch(`${kind === "vendor" ? "/vendors" : "/customers"}/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(fields) });
+  } catch (err) {
+    Object.assign(rec, before);
+    alert("Couldn't save that change: " + err.message);
+    render();
+  }
+}
 
 // Replaces the local demo seed data with real data from the database. Called once right after
 // login. Any (yard, commodity) pair with no rows yet in inventory_balances is left at qty 0 /
 // avgCost = that commodity's master price, matching how the backend itself would start it.
 async function bootstrapFromApi() {
-  const [apiCommodities, balances, ledger, apiTickets] = await Promise.all([
+  const [apiCommodities, balances, ledger, apiTickets, apiVendors, apiCustomers] = await Promise.all([
     apiFetch("/commodities"),
     apiFetch("/inventory/balances"),
     apiFetch("/inventory/ledger?limit=1000"),
     apiFetch("/tickets?limit=1000"),
+    apiFetch("/vendors"),
+    apiFetch("/customers"),
   ]);
 
   commodities = apiCommodities.map(mapApiCommodity);
+  vendors = apiVendors.map(mapApiVendor);
+  customers = apiCustomers.map(mapApiCustomer);
 
   inventoryByYard = { SB: {}, HAYS: {}, COLBY: {}, RC: {} };
   YARDS.forEach(y => { commodities.forEach(c => { inventoryByYard[y.code][c.code] = { qty: 0, avgCost: c.masterPrice }; }); });
@@ -2235,18 +2281,21 @@ function onPartyPick(kind, prefix) {
   if (val !== "") holdDescByPrefix[prefix] = ""; // party identified — clear any stand-in description
   if (prefix === "kiosk") renderKioskButtons();
 }
-function saveNewParty(kind, prefix) {
+async function saveNewParty(kind, prefix) {
   const name = document.getElementById(`${prefix}-np-name`).value.trim();
   if (!name) { alert("Name is required."); return; }
   const phone = document.getElementById(`${prefix}-np-phone`).value.trim();
   let id;
-  if (kind === "vendor") {
-    const tier = document.getElementById(`${prefix}-np-tier`).value;
-    id = "v" + (vendorSeq++);
-    vendors.push({ id, name, phone, tier, notes: "", created: "2026-08-18" });
-  } else {
-    id = "c" + (customerSeq++);
-    customers.push({ id, name, phone, notes: "", created: "2026-08-18" });
+  try {
+    if (kind === "vendor") {
+      const tier = document.getElementById(`${prefix}-np-tier`).value;
+      id = (await createParty("vendor", { name, phone, tier })).id;
+    } else {
+      id = (await createParty("customer", { name, phone })).id;
+    }
+  } catch (err) {
+    alert("Couldn't save: " + err.message);
+    return;
   }
   render(); // full re-render rebuilds the select with the new record
   requestAnimationFrame(() => { const sel = document.getElementById(`${prefix}-party-select`); if (sel) { sel.value = id; onPartyPick(kind, prefix); } });
@@ -2570,13 +2619,10 @@ async function completeKioskTicket() {
   if (btn) { btn.disabled = true; btn.textContent = "Posting…"; }
   try {
     for (const line of lines) {
-      // partyName only — the local vendor record's id doesn't exist as a row in the live database
-      // yet (vendor/customer sync is a later increment), so the ticket is posted as a named buy
-      // rather than linked to a vendor_id for now.
       const apiTicket = await apiFetch("/tickets", {
         method: "POST",
         body: JSON.stringify({
-          type: "buy", date: CURRENT_DATE, yard: currentYard, partyName: holdDescription || party,
+          type: "buy", date: CURRENT_DATE, yard: currentYard, vendorId: partyId, partyName: holdDescription || party,
           commodity: line.code, tier: line.tier, netWeight: line.netWeight, price: line.price, payment,
         }),
       });
@@ -2932,11 +2978,9 @@ async function submitTicket(type) {
     if (compliance === "no") { alert("Ticket flagged: compliance not verified. In a full build this would route to a manager-review queue instead of blocking the yard."); }
     const tier = party ? party.tier : "scale";
     try {
-      // partyName only, for the same reason as the kiosk — vendor ids here aren't rows in the live
-      // database yet, so the buy posts as a named walk-in rather than linked to a vendor_id.
       const apiTicket = await apiFetch("/tickets", {
         method: "POST",
-        body: JSON.stringify({ type: "buy", date: CURRENT_DATE, yard: currentYard, partyName: holdDescription || partyName, commodity, tier, netWeight: net, price, payment }),
+        body: JSON.stringify({ type: "buy", date: CURRENT_DATE, yard: currentYard, vendorId: partyId, partyName: holdDescription || partyName, commodity, tier, netWeight: net, price, payment }),
       });
       tickets.unshift(mapApiTicket(apiTicket));
       await refreshInventoryFor(currentYard, [commodity]);
@@ -2987,7 +3031,7 @@ async function submitTicket(type) {
       const dueDate = addDays(CURRENT_DATE, TERMS_DAYS[terms] || 0);
       const apiTicket = await apiFetch("/tickets", {
         method: "POST",
-        body: JSON.stringify({ type: "sell", date: CURRENT_DATE, yard: currentYard, partyName: holdDescription || partyName, commodity: line.commodity, netWeight: line.netWeight, price: line.price, payment }),
+        body: JSON.stringify({ type: "sell", date: CURRENT_DATE, yard: currentYard, customerId: partyId, partyName: holdDescription || partyName, commodity: line.commodity, netWeight: line.netWeight, price: line.price, payment }),
       });
       const t = mapApiTicket(apiTicket);
       t.gross = line.gross; t.tare = line.tare; t.terms = terms; t.dueDate = dueDate; t.shipmentId = shipmentId;
@@ -3779,13 +3823,13 @@ function moveJob(id, dir) { const job = dispatchJobs.find(j => j.id === id); con
 // A customer/site doesn't have a Vendor record by default (Buy tickets require a vendorId) — the first
 // time we need to pay a site for material collected off their lot, auto-create and link one rather than
 // forcing a manual "add them as a dealer too" step. Reuses a same-named vendor if one already exists.
-function findOrCreateVendorForCustomer(cust) {
+async function findOrCreateVendorForCustomer(cust) {
   if (cust.linkedVendorId) { const existingLinked = findVendor(cust.linkedVendorId); if (existingLinked) return existingLinked; }
   let v = vendors.find(v => v.name === cust.name);
   if (!v) {
-    v = { id: "v" + (vendorSeq++), name: cust.name, phone: cust.phone || "", tier: "scale", notes: "Auto-created — this site is also a Customer; linked from a container-truck pickup job.", created: CURRENT_DATE,
-      email: "", smartphone: false, onPriceList: false, autoSend: "off", lastSent: null, linkedCustomerId: cust.id };
-    vendors.push(v);
+    v = await createParty("vendor", { name: cust.name, phone: cust.phone || "", tier: "scale",
+      notes: "Auto-created — this site is also a Customer; linked from a container-truck pickup job." });
+    v.linkedCustomerId = cust.id; // the link itself is still local-only (no column for it yet)
   } else {
     v.linkedCustomerId = cust.id;
   }
@@ -3799,10 +3843,10 @@ const OWNED_TRUCK_HAUL_COST = 85;
 // Auto-creates the Buy ticket for a container-truck pickup job, tied to the job. The actual material and
 // weight aren't known until the truck is back across the scale, so it starts in "Pending Weight" — see
 // Purchasing → Pending Pickups — rather than "Held" (which means it's already been weighed).
-function createPurchaseTicketForJob(job, carrier) {
+async function createPurchaseTicketForJob(job, carrier) {
   const cust = findCustomer(job.customerId);
   if (!cust) return null;
-  const vendor = findOrCreateVendorForCustomer(cust);
+  const vendor = await findOrCreateVendorForCustomer(cust);
   const id = "B-" + (ticketSeq++);
   tickets.push({ id, type: "buy", date: job.date, yard: currentYard, party: vendor.name, partyId: vendor.id,
     commodity: null, tier: vendor.tier, netWeight: 0, price: 0, total: 0, payment: "Check",
@@ -3811,7 +3855,7 @@ function createPurchaseTicketForJob(job, carrier) {
   job.purchaseTicketId = id;
   return id;
 }
-function addDispatchJob() {
+async function addDispatchJob() {
   const customerId = document.getElementById("dj-customer").value;
   const cust = findCustomer(customerId);
   if (!cust) { alert("Add a customer first (Customers tab), then dispatch a job for them."); return; }
@@ -3839,7 +3883,7 @@ function addDispatchJob() {
   // Only a pickup/exchange on one of OUR container-swap trucks auto-creates the purchase ticket — a
   // delivery/dropoff isn't collecting material, and a common/dedicated carrier's haul isn't ours to net.
   if (carrier && carrier.type === "owned" && carrier.isContainerTruck && PICKUP_TRIP_TYPES.includes(trip)) {
-    createPurchaseTicketForJob(job, carrier);
+    await createPurchaseTicketForJob(job, carrier);
   }
   newDispatchJobOpen = false;
   render();
@@ -5044,13 +5088,17 @@ function viewVendors() {
     </div>
   `;
 }
-function addVendor() {
+async function addVendor() {
   const name = document.getElementById("nv-name").value.trim();
   if (!name) { alert("Name is required."); return; }
   const phone = document.getElementById("nv-phone").value.trim();
   const tier = document.getElementById("nv-tier").value;
-  vendors.push({ id: "v" + (vendorSeq++), name, phone, tier, notes: "", created: "2026-08-18",
-    email: "", smartphone: true, onPriceList: false, autoSend: "off", lastSent: null });
+  try {
+    await createParty("vendor", { name, phone, tier, smartphone: true });
+  } catch (err) {
+    alert("Couldn't save: " + err.message);
+    return;
+  }
   newVendorOpen = false; render();
 }
 function viewCustomers() {
@@ -5074,18 +5122,22 @@ function viewCustomers() {
     </div>
   `;
 }
-function toggleCustomerBusinessExempt(id) { const c = findCustomer(id); if (c) c.businessExempt = !c.businessExempt; render(); }
-function addCustomer() {
+function toggleCustomerBusinessExempt(id) { const c = findCustomer(id); if (c) patchParty("customer", id, { businessExempt: !c.businessExempt }); }
+async function addCustomer() {
   const name = document.getElementById("ncu-name").value.trim();
   if (!name) { alert("Name is required."); return; }
   const phone = document.getElementById("ncu-phone").value.trim();
   const terms = document.getElementById("ncu-terms").value;
   const address = document.getElementById("ncu-address").value.trim();
-  customers.push({ id: "c" + (customerSeq++), name, phone, notes: "", created: "2026-08-18",
-    tier: "scale", freightPerLb: 0, email: "", onPriceList: false, autoSend: "off", lastSent: null, terms, address });
+  try {
+    await createParty("customer", { name, phone, terms, address });
+  } catch (err) {
+    alert("Couldn't save: " + err.message);
+    return;
+  }
   newCustomerOpen = false; render();
 }
-function updateCustomerTerms(id, terms) { const c = findCustomer(id); if (c) c.terms = terms; render(); }
+function updateCustomerTerms(id, terms) { patchParty("customer", id, { terms }); }
 
 /* ---------------- Price Lists (built off the master price sheet) ----------------
    Two audiences, one master price sheet:
@@ -5101,15 +5153,15 @@ function updateSellTierMargin(tier, v) {
   if (changed) autoSendOnUpdate(`${TIER_LABEL[tier]} sell margin changed`, { customers: true, vendors: false });
   render();
 }
-function updateCustomerTier(id, tier) { findCustomer(id).tier = tier; render(); }
-function updateCustomerFreight(id, v) { findCustomer(id).freightPerLb = parseFloat(v) || 0; render(); }
-function updateCustomerEmail(id, v) { findCustomer(id).email = v.trim(); }
-function updateCustomerAutoSend(id, v) { findCustomer(id).autoSend = v; render(); }
-function toggleCustomerOnList(id) { findCustomer(id).onPriceList = !findCustomer(id).onPriceList; render(); }
-function updateVendorPhone(id, v) { findVendor(id).phone = v.trim(); render(); }
-function updateVendorAutoSend(id, v) { findVendor(id).autoSend = v; render(); }
-function toggleVendorOnList(id) { findVendor(id).onPriceList = !findVendor(id).onPriceList; render(); }
-function toggleVendorSmartphone(id) { const v = findVendor(id); v.smartphone = v.smartphone === false ? true : false; render(); }
+function updateCustomerTier(id, tier) { patchParty("customer", id, { tier }); }
+function updateCustomerFreight(id, v) { patchParty("customer", id, { freightPerLb: parseFloat(v) || 0 }); }
+function updateCustomerEmail(id, v) { patchParty("customer", id, { email: v.trim() }); }
+function updateCustomerAutoSend(id, v) { patchParty("customer", id, { autoSend: v }); }
+function toggleCustomerOnList(id) { const c = findCustomer(id); if (c) patchParty("customer", id, { onPriceList: !c.onPriceList }); }
+function updateVendorPhone(id, v) { patchParty("vendor", id, { phone: v.trim() }); }
+function updateVendorAutoSend(id, v) { patchParty("vendor", id, { autoSend: v }); }
+function toggleVendorOnList(id) { const v = findVendor(id); if (v) patchParty("vendor", id, { onPriceList: !v.onPriceList }); }
+function toggleVendorSmartphone(id) { const v = findVendor(id); if (v) patchParty("vendor", id, { smartphone: v.smartphone === false }); }
 
 let priceListSendLog = [];
 let priceListSendSeq = 1;

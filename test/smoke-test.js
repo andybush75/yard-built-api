@@ -74,6 +74,24 @@ async function main() {
   assert(ledger.status === 200 && ledger.body.length >= 2, "ledger has entries for both postings");
   assert(ledger.body[0].ref === sell.body.id, "most recent ledger entry references the sell ticket just posted");
 
+  // Vendor-linked buy: vendor_id is stored and the vendor's name is snapshotted when none is sent.
+  const linked = await req("POST", "/tickets", {
+    token,
+    body: { type: "buy", date: "2026-10-02", yard: "COLBY", vendorId: hendricks.id, commodity: "HMS2", netWeight: 50, price: 0.09, payment: "Check" },
+  });
+  assert(linked.status === 201 && linked.body.vendor_id === hendricks.id, "buy ticket stores vendor_id when a vendor is picked");
+  assert(linked.body.party_name === "Dale Hendricks", "party_name is snapshotted from the vendor record");
+  const badLink = await req("POST", "/tickets", {
+    token,
+    body: { type: "buy", date: "2026-10-02", yard: "COLBY", vendorId: "not-a-real-id", partyName: "x", commodity: "HMS2", netWeight: 50, price: 0.09, payment: "Check" },
+  });
+  assert(badLink.status === 400, "a vendorId that doesn't exist is rejected with 400");
+
+  const newVendor = await req("POST", "/vendors", { token, body: { name: "Smoke Test Dealer", phone: "308-555-0100", tier: "d2" } });
+  assert(newVendor.status === 201 && newVendor.body.id && newVendor.body.tier === "d2", "vendor can be created through the API");
+  const patched = await req("PATCH", `/vendors/${newVendor.body.id}`, { token, body: { smartphone: true, autoSend: "daily" } });
+  assert(patched.status === 200 && patched.body.smartphone === true && patched.body.auto_send === "daily", "vendor fields can be updated through the API");
+
   // A duplicate ticket id must be rejected, not silently overwritten — proves the real constraint
   // the in-memory prototype could never enforce.
   const dupe = await req("POST", "/tickets", { token, body: { id: buy.body.id, type: "buy", date: "2026-10-02", yard: "COLBY", partyName: "x", commodity: "HMS2", netWeight: 1, price: 0.01, payment: "Check" } });
