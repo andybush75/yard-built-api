@@ -1111,8 +1111,9 @@ let users = [
 ];
 let userSeq = 9;
 
-// Who's "logged in" for this prototype — there's no real auth system yet, so switch this
-// in Settings → Users to preview the app the way a given person would see it.
+// Set to the real signed-in user's id at login (doLogin). The demo value only matters before
+// login, when nothing is rendered yet. Every can() check in the UI runs against this user, and the
+// server re-checks the same permissions on anything that matters.
 let currentUserId = "u1";
 
 function findRole(id) { return roles.find(r => r.id === id); }
@@ -1188,6 +1189,12 @@ function mapApiCustomer(c) {
     businessExempt: !!c.business_exempt, created: c.created_at ? c.created_at.slice(0, 10) : null,
   };
 }
+function mapApiUser(u) {
+  return { id: u.id, name: u.name, email: u.email || "", roleId: u.role_id, grants: u.grants || [], revokes: u.revokes || [], active: u.active !== false };
+}
+function mapApiRole(r) {
+  return { id: r.id, name: r.name, system: !!r.system, permissions: r.permissions || [] };
+}
 // Creates a vendor or customer in the database and adds it to the local list. Field names match
 // what POST /vendors and POST /customers accept.
 async function createParty(kind, fields) {
@@ -1217,18 +1224,22 @@ async function patchParty(kind, id, fields) {
 // login. Any (yard, commodity) pair with no rows yet in inventory_balances is left at qty 0 /
 // avgCost = that commodity's master price, matching how the backend itself would start it.
 async function bootstrapFromApi() {
-  const [apiCommodities, balances, ledger, apiTickets, apiVendors, apiCustomers] = await Promise.all([
+  const [apiCommodities, balances, ledger, apiTickets, apiVendors, apiCustomers, apiUsers, apiRoles] = await Promise.all([
     apiFetch("/commodities"),
     apiFetch("/inventory/balances"),
     apiFetch("/inventory/ledger?limit=1000"),
     apiFetch("/tickets?limit=1000"),
     apiFetch("/vendors"),
     apiFetch("/customers"),
+    apiFetch("/users"),
+    apiFetch("/roles"),
   ]);
 
   commodities = apiCommodities.map(mapApiCommodity);
   vendors = apiVendors.map(mapApiVendor);
   customers = apiCustomers.map(mapApiCustomer);
+  users = apiUsers.map(mapApiUser);
+  roles = apiRoles.map(mapApiRole);
 
   inventoryByYard = { SB: {}, HAYS: {}, COLBY: {}, RC: {} };
   YARDS.forEach(y => { commodities.forEach(c => { inventoryByYard[y.code][c.code] = { qty: 0, avgCost: c.masterPrice }; }); });
@@ -1271,6 +1282,7 @@ async function doLogin(event) {
     authToken = data.token;
     apiUser = data.user;
     await bootstrapFromApi();
+    currentUserId = apiUser.id; // every can() check from here on is the real signed-in person
     document.getElementById("loginScreen").style.display = "none";
     document.getElementById("appRoot").style.display = "";
     render();
@@ -1288,7 +1300,7 @@ async function doLogin(event) {
 let notifications = [];
 let notifSeq = 1;
 let notifPanelOpen = false;
-function assignableUsers() { return users.slice().sort((a, b) => a.name.localeCompare(b.name)); }
+function assignableUsers() { return users.filter(u => u.active !== false).sort((a, b) => a.name.localeCompare(b.name)); }
 function assigneeName(wo) { const u = findUser(wo.assigneeId); return u ? u.name : null; }
 function notifyAssignment(wo, userId) {
   const a = findAsset(wo.assetId);
@@ -6652,57 +6664,113 @@ function viewSettingsUsers() {
   const u = currentUser();
   const canManage = can('manageUsers');
   return `
-    <div class="banner">Viewing as <b>${u ? u.name : "—"}</b> (${u ? (findRole(u.roleId)?.name || "—") : "—"}) — there's no real login system yet, so switch this to preview exactly what each person can see and do. <select id="su-viewas" onchange="currentUserId=this.value; render();" style="width:auto; display:inline-block; margin-left:8px;">${users.map(x => `<option value="${x.id}" ${x.id===currentUserId?"selected":""}>${x.name}</option>`).join("")}</select></div>
-    ${!canManage ? `<div class="banner" style="border-left-color:var(--critical);">You're viewing as someone without the "Manage users & roles" permission — the controls below are read-only from here.</div>` : ""}
+    <div class="banner">Signed in as <b>${u ? u.name : "—"}</b> (${u ? (findRole(u.roleId)?.name || "—") : "—"}). What each person can do is checked here and again on the server.</div>
+    ${!canManage ? `<div class="banner" style="border-left-color:var(--critical);">You don't have the "Manage users & roles" permission — the list below is read-only.</div>` : ""}
     <div class="panel">
       <div class="panel-head"><h2>Users</h2></div>
       <table>
-        <thead><tr><th>Name</th><th>Role</th><th>Effective permissions</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Effective permissions</th><th></th></tr></thead>
         <tbody>
           ${users.map(usr => {
             const role = findRole(usr.roleId);
             const effective = PERMISSIONS.filter(p => hasPermission(usr.id, p.key));
-            return `<tr>
-              <td>${usr.name}</td>
-              <td>${canManage ? `<select onchange="reassignUserRole('${usr.id}', this.value)">${roles.map(r => `<option value="${r.id}" ${r.id===usr.roleId?"selected":""}>${r.name}</option>`).join("")}</select>` : (role ? role.name : "—")}</td>
+            const self = usr.id === currentUserId;
+            const inactive = usr.active === false;
+            return `<tr${inactive ? ' style="opacity:.55;"' : ""}>
+              <td>${usr.name}${self ? ` <span class="footnote">(you)</span>` : ""}${inactive ? ` <span class="badge critical">Deactivated</span>` : ""}</td>
+              <td style="font-size:11.5px;">${usr.email || "—"}</td>
+              <td>${(canManage && !self && !inactive) ? `<select onchange="reassignUserRole('${usr.id}', this.value)">${roles.map(r => `<option value="${r.id}" ${r.id===usr.roleId?"selected":""}>${r.name}</option>`).join("")}</select>` : (role ? role.name : "—")}</td>
               <td style="font-size:11.5px; color:var(--text-secondary);">${effective.length ? effective.map(p => p.label).join(", ") : "None"}</td>
-              <td>${canManage ? `<button class="btn ghost" onclick="openUserAccessEditor('${usr.id}')">Edit access</button>` : ""}</td>
+              <td>${canManage ? (inactive ? `<button class="btn ghost" onclick="setUserActive('${usr.id}', true)">Reactivate</button>` : `<button class="btn ghost" onclick="openUserAccessEditor('${usr.id}')">Edit access</button>`) : ""}</td>
             </tr>`;
           }).join("")}
         </tbody>
       </table>
+      <div class="footnote" style="margin-top:8px;">Your own role and access can only be changed by another admin — that way nobody can lock themselves (or the whole office) out by accident.</div>
       <div id="user-access-editor"></div>
     </div>
     ${canManage ? `
     <div class="panel">
       <div class="panel-head"><h2>Add a user</h2></div>
-      <div class="form-grid">
+      <div class="form-grid cols4">
         <div><label>Name</label><input id="su-new-name" placeholder="Full name" /></div>
+        <div><label>Email (used to sign in)</label><input id="su-new-email" type="email" placeholder="name@langerindustrial.com" /></div>
+        <div><label>Temporary password</label><input id="su-new-password" type="text" placeholder="At least 8 characters" /></div>
         <div><label>Role</label><select id="su-new-role">${roles.map(r => `<option value="${r.id}">${r.name}</option>`).join("")}</select></div>
         <div style="display:flex; align-items:flex-end;"><button class="btn" onclick="addUser()">+ Add user</button></div>
       </div>
+      <div class="footnote" style="margin-top:8px;">Give the person their temporary password in person; they can change it below under "Change my password" once they're signed in.</div>
     </div>` : ""}
+    <div class="panel">
+      <div class="panel-head"><h2>Change my password</h2></div>
+      <div class="form-grid cols4">
+        <div><label>Current password</label><input id="su-pw-current" type="password" autocomplete="current-password" /></div>
+        <div><label>New password</label><input id="su-pw-new" type="password" autocomplete="new-password" placeholder="At least 8 characters" /></div>
+        <div><label>New password again</label><input id="su-pw-new2" type="password" autocomplete="new-password" /></div>
+        <div style="display:flex; align-items:flex-end;"><button class="btn" onclick="changeMyPassword()">Change password</button></div>
+      </div>
+    </div>
   `;
 }
-function reassignUserRole(userId, roleId) {
+// Saves one or more fields on a user through the API, then refreshes the local copy from the
+// server's answer so effective permissions on screen always match what the server will enforce.
+async function patchUser(userId, fields) {
+  const row = await apiFetch(`/users/${encodeURIComponent(userId)}`, { method: "PATCH", body: JSON.stringify(fields) });
+  const idx = users.findIndex(u => u.id === userId);
+  if (idx >= 0) users[idx] = mapApiUser(row);
+  return users[idx];
+}
+async function reassignUserRole(userId, roleId) {
   if (!can('manageUsers')) return;
-  findUser(userId).roleId = roleId;
+  try { await patchUser(userId, { roleId }); } catch (err) { alert("Couldn't change role: " + err.message); }
   render();
 }
-function addUser() {
+async function addUser() {
   if (!can('manageUsers')) return;
   const name = document.getElementById("su-new-name").value.trim();
-  if (!name) { alert("Enter a name."); return; }
+  const email = document.getElementById("su-new-email").value.trim();
+  const password = document.getElementById("su-new-password").value;
   const roleId = document.getElementById("su-new-role").value;
-  users.push({ id:"u"+(userSeq++), name, roleId, grants:[], revokes:[] });
+  if (!name) { alert("Enter a name."); return; }
+  if (!email) { alert("Enter the email address they'll sign in with."); return; }
+  if (password.length < 8) { alert("The temporary password needs at least 8 characters."); return; }
+  try {
+    const row = await apiFetch("/users", { method: "POST", body: JSON.stringify({ name, email, password, roleId }) });
+    users.push(mapApiUser(row));
+  } catch (err) {
+    alert("Couldn't add user: " + err.message);
+    return;
+  }
   render();
 }
-function removeUser(userId) {
+async function setUserActive(userId, active) {
   if (!can('manageUsers')) return;
-  if (userId === currentUserId) { alert("You can't remove the user you're currently viewing as — switch to someone else first."); return; }
-  if (!confirm("Remove this user?")) return;
-  users = users.filter(u => u.id !== userId);
+  if (userId === currentUserId) { alert("You can't deactivate yourself — ask another admin."); return; }
+  if (!active && !confirm("Deactivate this user? They won't be able to sign in until reactivated. Their history stays on the books.")) return;
+  try { await patchUser(userId, { active }); } catch (err) { alert("Couldn't update user: " + err.message); }
   render();
+}
+async function resetUserPassword(userId) {
+  if (!can('manageUsers')) return;
+  const u = findUser(userId); if (!u) return;
+  const pw = prompt(`New temporary password for ${u.name} (at least 8 characters). Tell them in person; they can change it after signing in.`);
+  if (pw === null) return;
+  if (pw.length < 8) { alert("Password needs at least 8 characters."); return; }
+  try { await patchUser(userId, { password: pw }); alert(`Password reset for ${u.name}.`); } catch (err) { alert("Couldn't reset password: " + err.message); }
+}
+async function changeMyPassword() {
+  const cur = document.getElementById("su-pw-current").value;
+  const nw = document.getElementById("su-pw-new").value;
+  const nw2 = document.getElementById("su-pw-new2").value;
+  if (nw.length < 8) { alert("New password needs at least 8 characters."); return; }
+  if (nw !== nw2) { alert("The two new passwords don't match."); return; }
+  try {
+    await apiFetch("/auth/change-password", { method: "POST", body: JSON.stringify({ currentPassword: cur, newPassword: nw }) });
+    alert("Password changed.");
+    render();
+  } catch (err) {
+    alert("Couldn't change password: " + err.message);
+  }
 }
 function openUserAccessEditor(userId) {
   const el = document.getElementById("user-access-editor");
@@ -6726,21 +6794,23 @@ function openUserAccessEditor(userId) {
           }).join("")}
         </tbody>
       </table>
-      <div style="margin-top:12px; display:flex; gap:10px;">
-        <button class="btn secondary" onclick="removeUser('${u.id}')">Remove user</button>
+      <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn ghost" onclick="resetUserPassword('${u.id}')">Reset password</button>
+        ${u.id !== currentUserId ? `<button class="btn secondary" onclick="setUserActive('${u.id}', false)">Deactivate user</button>` : ""}
         <button class="btn ghost" onclick="document.getElementById('user-access-editor').innerHTML='';">Close</button>
       </div>
     </div>`;
 }
-function toggleUserPermission(userId, key) {
+async function toggleUserPermission(userId, key) {
   if (!can('manageUsers')) { alert("You don't have access to manage users."); return; }
   const u = findUser(userId);
   const role = findRole(u.roleId);
   const roleDefault = role ? role.permissions.includes(key) : false;
   const wantHas = !hasPermission(userId, key);
-  u.grants = u.grants.filter(k => k !== key);
-  u.revokes = u.revokes.filter(k => k !== key);
-  if (wantHas !== roleDefault) { (wantHas ? u.grants : u.revokes).push(key); }
+  const grants = u.grants.filter(k => k !== key);
+  const revokes = u.revokes.filter(k => k !== key);
+  if (wantHas !== roleDefault) { (wantHas ? grants : revokes).push(key); }
+  try { await patchUser(userId, { grants, revokes }); } catch (err) { alert("Couldn't save: " + err.message); }
   render();
   openUserAccessEditor(userId);
 }
@@ -6774,25 +6844,35 @@ function viewSettingsRoles() {
     </div>` : ""}
   `;
 }
-function toggleRolePermission(roleId, key) {
+async function toggleRolePermission(roleId, key) {
   if (!can('manageUsers')) return;
   const r = findRole(roleId);
-  if (r.system) return;
-  if (r.permissions.includes(key)) r.permissions = r.permissions.filter(k => k !== key);
-  else r.permissions.push(key);
+  if (!r || r.system) return;
+  const permissions = r.permissions.includes(key) ? r.permissions.filter(k => k !== key) : [...r.permissions, key];
+  try {
+    const row = await apiFetch(`/roles/${encodeURIComponent(roleId)}`, { method: "PATCH", body: JSON.stringify({ permissions }) });
+    Object.assign(r, mapApiRole(row));
+  } catch (err) { alert("Couldn't save: " + err.message); }
   render();
 }
-function addRole() {
+async function addRole() {
   if (!can('manageUsers')) return;
   const name = document.getElementById("sr-new-name").value.trim();
   if (!name) { alert("Enter a role name."); return; }
-  roles.push({ id:"role-"+(roleSeq++), name, system:false, permissions:[] });
+  try {
+    const row = await apiFetch("/roles", { method: "POST", body: JSON.stringify({ name, permissions: [] }) });
+    roles.push(mapApiRole(row));
+  } catch (err) { alert("Couldn't add role: " + err.message); return; }
   render();
 }
-function removeRole(roleId) {
+async function removeRole(roleId) {
   if (!can('manageUsers')) return;
   if (users.some(u => u.roleId === roleId)) { alert("Reassign the users on this role before deleting it."); return; }
-  roles = roles.filter(r => r.id !== roleId);
+  if (!confirm("Delete this role?")) return;
+  try {
+    await apiFetch(`/roles/${encodeURIComponent(roleId)}`, { method: "DELETE" });
+    roles = roles.filter(r => r.id !== roleId);
+  } catch (err) { alert("Couldn't delete role: " + err.message); }
   render();
 }
 

@@ -15,6 +15,8 @@ app.get("/health", (req, res) => res.json({ ok: true, service: "yard-built-api",
 app.use(express.static(path.join(__dirname, "public")));
 
 app.use("/auth", require("./routes/auth"));
+app.use("/users", require("./routes/users"));
+app.use("/roles", require("./routes/roles"));
 app.use("/commodities", require("./routes/commodities"));
 app.use("/vendors", require("./routes/vendors"));
 app.use("/customers", require("./routes/customers"));
