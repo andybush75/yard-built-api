@@ -102,6 +102,15 @@ individual grant) includes it; everything else is open to any logged-in user.
 - `GET/POST/PATCH /carriers`
 - `POST /remittances` also takes `freightIds`; one check can cover material and freight lines.
   Placeholder (Estimated) freight can't be paid until reconciled.
+- `GET/POST/PATCH /trailers` — trailers, rail-car and carrier-trailer buckets (number, home yard,
+  type, current carrier, owned, tons target). `GET /trailers/utilization?weeks=13&asOf=` — loads
+  and tons per trailer per Sun–Sat week, outbound (sells) and inbound (buys), computed from
+  `tickets.trailer_id`, with imported `trailer_week_history` filling weeks that have no tickets.
+  `POST /trailers/import-history` (`manageUsers`) loads weekly rows; the UI bundles the TMS sheet's
+  history in `src/public/data/`.
+- `PATCH /tickets/:id/trailer` — set which trailer hauled a load, any time.
+- `GET /settings`, `PATCH /settings` (`manageUsers`) — app-wide settings (`app_settings` table):
+  trailer loads goal, tons targets by type.
 
 Every action on a ticket writes an `audit_log` row (`src/audit.js`); the ticket timeline is those rows.
 

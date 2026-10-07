@@ -1215,6 +1215,7 @@ function mapApiTicket(t) {
     remittanceId: t.remittance_id, status: t.status, cogsPerLb: t.cogs_per_lb != null ? parseFloat(t.cogs_per_lb) : null,
     contractId: t.contract_id, poId: t.po_id, shipmentId: t.shipment_id, holdDescription: t.hold_desc,
     createdAt: t.created_at || null, closedAt: t.closed_at || null, voidedAt: t.voided_at || null, voidReason: t.void_reason || null,
+    trailerId: t.trailer_id || null,
   };
 }
 function mapApiRemittance(r) {
@@ -1254,6 +1255,19 @@ async function absorbFreightResult(res) {
   }
   return f;
 }
+let trailers = [];
+let appSettings = {};
+function mapApiTrailer(t) {
+  return { id: t.id, number: t.number, yard: t.yard, type: t.type, carrierId: t.carrier_id || null, carrierName: t.carrier_name || null, owned: t.owned !== false, targetTonsPerWeek: t.target_tons_per_week ?? null, active: t.active !== false, notes: t.notes || "" };
+}
+function findTrailer(id) { return trailers.find(t => t.id === id); }
+// Trailer / rail car picker shared by the kiosk, the ticket form and the ticket page. Value is the
+// trailer id ("" = none). Active trailers only, home yard first.
+function trailerPickerHtml(selectId, selected, label = "Trailer / rail car (optional)") {
+  const list = trailers.filter(t => t.active).sort((a, b) => (a.yard === currentYard ? 0 : 1) - (b.yard === currentYard ? 0 : 1) || a.yard.localeCompare(b.yard) || a.number.localeCompare(b.number, undefined, { numeric: true }));
+  return `<div><label>${label}</label><select id="${selectId}"><option value="">— none / unknown —</option>${list.map(t => `<option value="${t.id}" ${t.id === selected ? "selected" : ""}>${htmlEsc(t.number)} · ${htmlEsc(t.type)} · ${yardName(t.yard)}${t.carrierName ? " · " + htmlEsc(t.carrierName) : ""}</option>`).join("")}</select></div>`;
+}
+function pickedTrailer(selectId) { const el = document.getElementById(selectId); return el && el.value ? el.value : null; }
 function mapApiBankAccount(b) {
   return { yard: b.yard, bankName: b.bank_name, last4: b.last4, startingBalance: parseFloat(b.starting_balance) || 0, nextCheckNumber: b.next_check_number };
 }
@@ -1326,7 +1340,7 @@ async function patchParty(kind, id, fields) {
 // login. Any (yard, commodity) pair with no rows yet in inventory_balances is left at qty 0 /
 // avgCost = that commodity's master price, matching how the backend itself would start it.
 async function bootstrapFromApi() {
-  const [apiCommodities, balances, ledger, apiTickets, apiVendors, apiCustomers, apiUsers, apiRoles, apiRemittances, apiBankAccounts, apiFreight, apiLanes, apiCarriers] = await Promise.all([
+  const [apiCommodities, balances, ledger, apiTickets, apiVendors, apiCustomers, apiUsers, apiRoles, apiRemittances, apiBankAccounts, apiFreight, apiLanes, apiCarriers, apiTrailers, apiSettings] = await Promise.all([
     apiFetch("/commodities"),
     apiFetch("/inventory/balances"),
     apiFetch("/inventory/ledger?limit=1000"),
@@ -1340,10 +1354,14 @@ async function bootstrapFromApi() {
     apiFetch("/freight?limit=2000"),
     apiFetch("/lanes"),
     apiFetch("/carriers"),
+    apiFetch("/trailers"),
+    apiFetch("/settings"),
   ]);
   freightTickets = apiFreight.map(mapApiFreight).reverse();
   freightLanes = apiLanes.map(mapApiLane);
   carriers = apiCarriers.map(mapApiCarrier);
+  trailers = apiTrailers.map(mapApiTrailer);
+  appSettings = apiSettings || {};
 
   commodities = apiCommodities.map(mapApiCommodity);
   vendors = apiVendors.map(mapApiVendor);
@@ -2523,6 +2541,7 @@ function viewKioskBuy() {
           <div class="panel-head" style="margin-top:14px;"><h2 style="font-size:12.5px;">Freight (optional)</h2></div>
           <div class="form-grid cols4">
             <div><label>Carrier</label><select id="kf-carrier"><option value="">— no freight —</option>${carriers.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
+            ${trailerPickerHtml("kf-trailer", null, "Trailer (if it came in on one)")}
             <div><label>Lane</label><select id="kf-lane" onchange="applyLaneToKioskForm()"><option value="">— custom —</option>${freightLanes.map(l => `<option value="${l.id}">${l.origin} → ${l.destination}</option>`).join("")}</select></div>
             <div><label>Origin</label><input id="kf-origin" placeholder="e.g. Scottsbluff, NE" /></div>
             <div><label>Destination</label><input id="kf-dest" placeholder="e.g. Nucor Steel Kingman" /></div>
@@ -2767,7 +2786,7 @@ async function completeKioskTicket() {
         method: "POST",
         body: JSON.stringify({
           type: "buy", date: CURRENT_DATE, yard: currentYard, vendorId: partyId, partyName: holdDescription || party,
-          commodity: line.code, tier: line.tier, netWeight: line.netWeight, price: line.price, payment,
+          commodity: line.code, tier: line.tier, netWeight: line.netWeight, price: line.price, payment, trailerId: pickedTrailer("kf-trailer"),
         }),
       });
       newIds.push(apiTicket.id);
@@ -3004,6 +3023,7 @@ function viewTicketPage() {
         ${t.contractId ? `<div><div class="label">Contract</div><div class="value">${htmlEsc(t.contractId)}</div></div>` : ""}
         ${t.poId ? `<div><div class="label">Purchase order</div><div class="value">${htmlEsc(t.poId)}</div></div>` : ""}
         <div><div class="label">Freight</div><div class="value">${freightCellHtml(t.id)}</div></div>
+        <div><div class="label">Trailer</div><div class="value">${voided ? (t.trailerId && findTrailer(t.trailerId) ? htmlEsc(findTrailer(t.trailerId).number) : "—") : `<select onchange="setTicketTrailer('${t.id}', this.value)" style="width:auto;"><option value="">— none / unknown —</option>${trailers.filter(x => x.active || x.id === t.trailerId).map(x => `<option value="${x.id}" ${x.id === t.trailerId ? "selected" : ""}>${htmlEsc(x.number)} · ${htmlEsc(x.type)} · ${yardName(x.yard)}</option>`).join("")}</select>`}</div></div>
       </div>
     </div>
     <div class="panel">
@@ -3205,6 +3225,7 @@ function viewTicketForm(type) {
         <div><label>Freight cost</label><input id="tf-freight-cost" type="number" step="0.01" value="0" /></div>
         <div style="display:flex; align-items:flex-end; padding-bottom:8px;"><label style="font-weight:400; display:flex; align-items:center; gap:6px;"><input type="checkbox" id="tf-freight-placeholder" style="width:auto;" /> Cost not known yet — use $0.01 placeholder</label></div>
         ${type === "sell" ? `<div><label>BOL / PRO # (optional)</label><input id="tf-bol-number" placeholder="e.g. SB105076" /></div>` : ""}
+        ${trailerPickerHtml("tf-trailer", null)}
       </div>
       <div style="margin-top:16px; display:flex; gap:10px;">
         <button class="btn" onclick="submitTicket('${type}')">${type === "buy" ? "Close Ticket" : (shipmentCart.length ? "Complete Shipment" : "Save ticket")}</button>
@@ -3332,7 +3353,7 @@ async function submitTicket(type) {
     try {
       const apiTicket = await apiFetch("/tickets", {
         method: "POST",
-        body: JSON.stringify({ type: "buy", date: CURRENT_DATE, yard: currentYard, vendorId: partyId, partyName: holdDescription || partyName, commodity, tier, netWeight: net, price, payment }),
+        body: JSON.stringify({ type: "buy", date: CURRENT_DATE, yard: currentYard, vendorId: partyId, partyName: holdDescription || partyName, commodity, tier, netWeight: net, price, payment, trailerId: pickedTrailer("tf-trailer") }),
       });
       tickets.unshift(mapApiTicket(apiTicket));
       await refreshInventoryFor(currentYard, [commodity]);
@@ -3383,7 +3404,7 @@ async function submitTicket(type) {
       const dueDate = addDays(CURRENT_DATE, TERMS_DAYS[terms] || 0);
       const apiTicket = await apiFetch("/tickets", {
         method: "POST",
-        body: JSON.stringify({ type: "sell", date: CURRENT_DATE, yard: currentYard, customerId: partyId, partyName: holdDescription || partyName, commodity: line.commodity, netWeight: line.netWeight, price: line.price, payment }),
+        body: JSON.stringify({ type: "sell", date: CURRENT_DATE, yard: currentYard, customerId: partyId, partyName: holdDescription || partyName, commodity: line.commodity, netWeight: line.netWeight, price: line.price, payment, trailerId: pickedTrailer("tf-trailer") }),
       });
       const t = mapApiTicket(apiTicket);
       t.gross = line.gross; t.tare = line.tare; t.terms = terms; t.dueDate = dueDate; t.shipmentId = shipmentId;
@@ -5122,14 +5143,159 @@ function viewMaintInspections() {
 let freightTab = "board";
 let freightAttachTicketId = null;
 function viewFreight() {
-  const tabs = [["board","Board"],["containers","Containers"],["boxrent","Box Rent"],["profitability","Profitability"],["lanes","Lanes"],["tickets","Freight Tickets"],["carriers","Carriers"]];
-  const bodies = { board: viewDispatchBoard, containers: viewContainers, boxrent: viewBoxRent, profitability: viewFreightProfitability, lanes: viewFreightLanes, tickets: viewFreightTicketsTab, carriers: viewCarriers };
+  const tabs = [["board","Board"],["trailers","Trailers"],["containers","Containers"],["boxrent","Box Rent"],["profitability","Profitability"],["lanes","Lanes"],["tickets","Freight Tickets"],["carriers","Carriers"]];
+  const bodies = { board: viewDispatchBoard, trailers: viewTrailers, containers: viewContainers, boxrent: viewBoxRent, profitability: viewFreightProfitability, lanes: viewFreightLanes, tickets: viewFreightTicketsTab, carriers: viewCarriers };
   if (!bodies[freightTab]) freightTab = "board";
   return `
     <div class="subtitle">Dispatch (Board/Containers) now lives here alongside the rest of Freight — Langer's own trucking (Profitability), optional route presets (Lanes), freight cost attached to a specific inbound/outbound scale ticket (Freight Tickets, which feeds Shipment Gross Profit in Reports), the Carrier list (owned trucks, common carriers, and dedicated haulers), and box rent billing for containers sitting at a customer's site (Box Rent).</div>
     <div class="tabs">${tabs.map(([id,label]) => `<button class="tab ${freightTab===id?'active':''}" onclick="freightTab='${id}'; render();">${label}</button>`).join("")}</div>
     ${bodies[freightTab]()}
   `;
+}
+/* ---------------- Trailer utilization ----------------
+   The "Trailer Utilization" tab of the old TMS sheet, kept by the tickets instead of by hand: every
+   buy/sell ticket can name the trailer that hauled it, and this screen rolls those up per trailer per
+   Sun–Sat week — loads and tons out (sells) and in (buys), days since the last load, and tons vs the
+   target for that trailer type. Weeks before the cutover come from the imported sheet history. */
+let trailerUtil = null, trailerUtilLoading = false, trailerUtilError = null, trailerShowGrid = false, newTrailerOpen = false, editTrailerId = null;
+const TRAILER_TYPES = ["End dump", "Gondola", "Flatbed", "Van", "Railcar", "Other"];
+async function loadTrailerUtil(force) {
+  if (trailerUtilLoading || (trailerUtil && !force)) return;
+  trailerUtilLoading = true; trailerUtilError = null;
+  try { trailerUtil = await apiFetch(`/trailers/utilization?weeks=13&asOf=${CURRENT_DATE}`); }
+  catch (err) { trailerUtilError = err.message; }
+  trailerUtilLoading = false;
+  render();
+}
+function viewTrailers() {
+  if (!trailerUtil && !trailerUtilError) { loadTrailerUtil(false); }
+  const canManage = can("manageUsers");
+  const U = trailerUtil;
+  const f0 = n => Math.round(n || 0).toLocaleString(), f1 = n => (Math.round((n || 0) * 10) / 10).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  let body = "";
+  if (trailerUtilError) body = `<div class="panel placeholder"><h3>Couldn't load trailer utilization</h3><p style="font-size:12.5px;">${htmlEsc(trailerUtilError)}</p><button class="btn ghost" onclick="loadTrailerUtil(true)">Try again</button></div>`;
+  else if (!U) body = `<div class="panel placeholder"><h3>Loading…</h3></div>`;
+  else {
+    const n = U.weeks.length, cur = n - 1, prev = n - 2;
+    const wk = i => { const d = new Date(U.weeks[i].start + "T00:00:00"); return `${d.getMonth() + 1}/${d.getDate()}`; };
+    const rows = U.trailers;
+    // "Active" = Langer-owned and used in the last four weeks; rail-car / carrier-trailer buckets
+    // are shown in the table but don't count toward the target tally.
+    const act = rows.filter(t => t.owned !== false && (t.outLoads.slice(-4).some(v => v > 0) || t.inLoads.slice(-4).some(v => v > 0)));
+    const sum = (k, i) => act.reduce((a, t) => a + (t[k][i] || 0), 0);
+    const hit = act.filter(t => t.outTons[prev] >= t.target).length;
+    const yardsIn = [...new Set(rows.map(t => t.yard))].sort((a, b) => YARDS.findIndex(y => y.code === a) - YARDS.findIndex(y => y.code === b));
+    const tableRows = yardsIn.map(y => `<tr style="background:var(--surface-2, rgba(0,0,0,.03)); font-weight:700;"><td colspan="10">${yardName(y)}</td></tr>` + rows.filter(t => t.yard === y).map(t => {
+      const lt = t.outTons[prev] || 0, pct = Math.round(100 * lt / Math.max(1, t.target));
+      const d = t.daysSinceOut, idle = d === null || d >= 7;
+      const sinceTxt = d === null ? "no loads" : `${d} day${d === 1 ? "" : "s"}`;
+      const loadsWarn = (t.outLoads[prev] || 0) < U.loadsGoal;
+      return `<tr${t.active === false ? ' style="opacity:.5;"' : ""}>
+        <td><b>${htmlEsc(t.number)}</b> <span class="footnote" style="display:inline;">${htmlEsc(t.type)}${t.owned ? "" : " · not ours"}</span></td>
+        <td>${t.carrierName ? htmlEsc(t.carrierName) : `<span class="footnote" style="display:inline;">Langer / unassigned</span>`}</td>
+        <td class="num" style="border-left:1px solid var(--border);">${loadsWarn ? `<span style="color:#96650a;">${f0(t.outLoads[prev])}</span>` : f0(t.outLoads[prev])}</td><td class="num">${f1(lt)}</td>
+        <td><span style="display:inline-block; width:70px; height:8px; background:rgba(0,0,0,.08); border-radius:4px; vertical-align:middle; overflow:hidden;"><i style="display:block; height:100%; width:${Math.min(100, pct)}%; background:${pct >= 100 ? "var(--good)" : "#eda100"};"></i></span> <span style="${pct >= 100 ? "color:var(--good); font-weight:700;" : ""}">${pct}%</span> <span class="footnote" style="display:inline;">of ${t.target}</span></td>
+        <td class="num" style="border-left:1px solid var(--border);">${f0(t.outLoads[cur])}</td><td class="num">${f1(t.outTons[cur])}</td>
+        <td class="num" style="border-left:1px solid var(--border);">${f0(t.inLoads[prev])} / ${f0(t.inLoads[cur])}</td>
+        <td class="num">${idle ? `<span class="badge held">${sinceTxt}</span>` : sinceTxt}</td>
+        <td>${canManage ? `<button class="btn ghost small" onclick="editTrailerId='${t.id}'; render();">Edit</button>` : ""}</td>
+      </tr>${editTrailerId === t.id ? `<tr><td colspan="10">${editTrailerPanelHtml(t.id)}</td></tr>` : ""}`;
+    }).join("")).join("");
+    body = `
+      <div class="panel">
+        <div class="panel-head"><h2>Trailer utilization — outbound</h2><span class="footnote" style="margin:0;">This week = wk of ${wk(cur)} (partial) · last week = wk of ${wk(prev)} · weeks run Sunday–Saturday</span></div>
+        <div class="kpi-row" style="grid-template-columns: repeat(4,1fr); margin-bottom:14px;">
+          <div class="tile"><div class="label">Last week</div><div class="value">${f1(sum("outTons", prev))} tons</div><div class="footnote">on ${f0(sum("outLoads", prev))} loads</div></div>
+          <div class="tile"><div class="label">Hit their tons target</div><div class="value">${hit} of ${act.length}</div><div class="footnote">active trailers</div></div>
+          <div class="tile"><div class="label">Average per trailer</div><div class="value">${f1(sum("outTons", prev) / Math.max(1, act.length))} tons</div><div class="footnote">last week</div></div>
+          <div class="tile"><div class="label">This week so far</div><div class="value">${f1(sum("outTons", cur))} tons</div><div class="footnote">${f0(sum("outLoads", cur))} loads</div></div>
+        </div>
+        <div style="overflow-x:auto;"><table>
+          <thead><tr><th></th><th></th><th class="num" colspan="3" style="border-left:1px solid var(--border);">Last week</th><th class="num" colspan="2" style="border-left:1px solid var(--border);">This week</th><th style="border-left:1px solid var(--border);"></th><th></th><th></th></tr>
+          <tr><th>Trailer</th><th>Current carrier</th><th class="num" style="border-left:1px solid var(--border);">Loads</th><th class="num">Tons</th><th>vs tons target</th><th class="num" style="border-left:1px solid var(--border);">Loads</th><th class="num">Tons</th><th class="num" style="border-left:1px solid var(--border);">Inbound loads (last / this)</th><th class="num">Since last load out</th><th></th></tr></thead>
+          <tbody>${tableRows || `<tr><td colspan="10" class="empty">No trailers yet — add them below, or import the history from the TMS sheet.</td></tr>`}</tbody>
+        </table></div>
+        <div class="footnote" style="margin-top:8px;">Loads goal is ${U.loadsGoal} a week (amber when under). Tons targets by type: ${Object.entries(U.targets).map(([k, v]) => `${k} ${v}`).join(" · ")} — override per trailer with Edit. A load is counted the day its ticket is written; a shipment of several materials on one trailer is one load. <span class="link" onclick="trailerShowGrid=!trailerShowGrid; render();">${trailerShowGrid ? "Hide" : "Show"} the 13-week grid →</span></div>
+      </div>
+      ${trailerShowGrid ? `<div class="panel"><div class="panel-head"><h2>13 weeks — outbound tons (loads)</h2></div><div style="overflow-x:auto;"><table>
+        <thead><tr><th>Trailer</th>${U.weeks.map((w, i) => `<th class="num">wk ${wk(i)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.map(t => `<tr><td><b>${htmlEsc(t.number)}</b> <span class="footnote" style="display:inline;">${yardName(t.yard)}</span></td>${U.weeks.map((w, i) => `<td class="num" style="${t.outTons[i] >= t.target ? "color:var(--good); font-weight:600;" : ""}">${t.outTons[i] ? f1(t.outTons[i]) : "—"}${t.outLoads[i] ? ` <span class="footnote" style="display:inline;">(${f0(t.outLoads[i])})</span>` : ""}</td>`).join("")}</tr>`).join("")}</tbody>
+      </table></div>
+      <div class="panel-head" style="margin-top:14px;"><h2>13 weeks — inbound tons (loads)</h2></div><div style="overflow-x:auto;"><table>
+        <thead><tr><th>Trailer</th>${U.weeks.map((w, i) => `<th class="num">wk ${wk(i)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.filter(t => t.inLoads.some(v => v > 0)).map(t => `<tr><td><b>${htmlEsc(t.number)}</b></td>${U.weeks.map((w, i) => `<td class="num">${t.inTons[i] ? f1(t.inTons[i]) : "—"}${t.inLoads[i] ? ` <span class="footnote" style="display:inline;">(${f0(t.inLoads[i])})</span>` : ""}</td>`).join("")}</tr>`).join("") || `<tr><td colspan="14" class="empty">No inbound loads on a tracked trailer in this window.</td></tr>`}</tbody>
+      </table></div></div>` : ""}`;
+  }
+  return `
+    <div class="subtitle">How hard each trailer is working. Pick the trailer on the ticket at the scale and this keeps itself — no separate sheet.</div>
+    ${body}
+    ${canManage ? `<div class="panel">
+      <div class="panel-head"><h2>Trailers (${trailers.length})</h2><div style="display:flex; gap:8px;"><button class="btn ghost small" onclick="importTrailerHistory()">Import TMS sheet history (through 10/4/26)</button><button class="btn small" onclick="newTrailerOpen=!newTrailerOpen; render();">${newTrailerOpen ? "Cancel" : "+ Add trailer"}</button></div></div>
+      ${newTrailerOpen ? `<div class="inlineform"><div class="form-grid cols4">
+        <div><label>Number / label</label><input id="nt-number" placeholder="e.g. 258, or Rail cars" /></div>
+        <div><label>Home yard</label><select id="nt-yard">${YARDS.map(y => `<option value="${y.code}" ${y.code === currentYard ? "selected" : ""}>${y.name}</option>`).join("")}</select></div>
+        <div><label>Type</label><select id="nt-type">${TRAILER_TYPES.map(t => `<option ${t === "Gondola" ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+        <div><label>Current carrier</label><select id="nt-carrier"><option value="">Langer / unassigned</option>${carriers.map(c => `<option value="${c.id}">${htmlEsc(c.name)}</option>`).join("")}</select></div>
+        <div><label>Tons target / week (blank = type default)</label><input id="nt-target" type="number" step="1" placeholder="type default" /></div>
+        <div style="display:flex; align-items:flex-end;"><label style="font-weight:400; display:flex; align-items:center; gap:6px;"><input type="checkbox" id="nt-owned" checked style="width:auto;" /> Langer owns it</label></div>
+        <div style="display:flex; align-items:flex-end;"><button class="btn small" onclick="addTrailer()">Save trailer</button></div>
+      </div></div>` : ""}
+      <div class="footnote">Inactive trailers stay on the books but drop out of the pickers and the table. "Not ours" records (rail cars, carrier trailers) are buckets so those loads are still counted.</div>
+    </div>` : ""}
+  `;
+}
+function editTrailerPanelHtml(id) {
+  const t = findTrailer(id); if (!t) return "";
+  return `<div class="inlineform"><div class="form-grid cols4">
+    <div><label>Number / label</label><input id="et-number" value="${htmlEsc(t.number)}" /></div>
+    <div><label>Home yard</label><select id="et-yard">${YARDS.map(y => `<option value="${y.code}" ${y.code === t.yard ? "selected" : ""}>${y.name}</option>`).join("")}</select></div>
+    <div><label>Type</label><select id="et-type">${TRAILER_TYPES.map(x => `<option ${x === t.type ? "selected" : ""}>${x}</option>`).join("")}</select></div>
+    <div><label>Current carrier</label><select id="et-carrier"><option value="">Langer / unassigned</option>${carriers.map(c => `<option value="${c.id}" ${c.id === t.carrierId ? "selected" : ""}>${htmlEsc(c.name)}</option>`).join("")}</select></div>
+    <div><label>Tons target / week (blank = type default)</label><input id="et-target" type="number" step="1" value="${t.targetTonsPerWeek ?? ""}" placeholder="type default" /></div>
+    <div style="display:flex; align-items:flex-end; gap:14px;"><label style="font-weight:400; display:flex; align-items:center; gap:6px;"><input type="checkbox" id="et-owned" ${t.owned ? "checked" : ""} style="width:auto;" /> Langer owns it</label><label style="font-weight:400; display:flex; align-items:center; gap:6px;"><input type="checkbox" id="et-active" ${t.active ? "checked" : ""} style="width:auto;" /> Active</label></div>
+    <div style="display:flex; align-items:flex-end; gap:8px;"><button class="btn small" onclick="saveTrailer('${t.id}')">Save</button><button class="btn ghost small" onclick="editTrailerId=null; render();">Cancel</button></div>
+  </div></div>`;
+}
+async function addTrailer() {
+  const number = document.getElementById("nt-number").value.trim();
+  if (!number) { alert("Enter the trailer number."); return; }
+  const target = document.getElementById("nt-target").value.trim();
+  const body = { number, yard: document.getElementById("nt-yard").value, type: document.getElementById("nt-type").value, carrierId: document.getElementById("nt-carrier").value || null,
+    owned: document.getElementById("nt-owned").checked, targetTonsPerWeek: target ? parseInt(target, 10) : null };
+  try { trailers.push(mapApiTrailer(await apiFetch("/trailers", { method: "POST", body: JSON.stringify(body) }))); }
+  catch (err) { alert("Couldn't add trailer: " + err.message); return; }
+  newTrailerOpen = false; trailerUtil = null; render();
+}
+async function saveTrailer(id) {
+  const target = document.getElementById("et-target").value.trim();
+  const body = { number: document.getElementById("et-number").value.trim(), yard: document.getElementById("et-yard").value, type: document.getElementById("et-type").value,
+    carrierId: document.getElementById("et-carrier").value || "", owned: document.getElementById("et-owned").checked, active: document.getElementById("et-active").checked,
+    targetTonsPerWeek: target ? parseInt(target, 10) : null };
+  try {
+    const row = await apiFetch(`/trailers/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) });
+    const i = trailers.findIndex(t => t.id === id); if (i >= 0) trailers[i] = mapApiTrailer(row);
+  } catch (err) { alert("Couldn't save: " + err.message); return; }
+  editTrailerId = null; trailerUtil = null; render();
+}
+// Loads the history bundled with the app (data/trailer-history-*.json, parsed from the TMS sheet's
+// Trailer Utilization tab) into the database. Safe to run again — weeks are overwritten, not doubled.
+async function importTrailerHistory() {
+  if (!confirm("Import the 13 weeks of trailer history (7/12 – 10/4/2026) from the old TMS sheet? Trailers that don't exist yet will be created. Running it twice is safe.")) return;
+  try {
+    const res = await fetch("data/trailer-history-2026-10-04.json"); const data = await res.json();
+    const out = await apiFetch("/trailers/import-history", { method: "POST", body: JSON.stringify({ rows: data.rows }) });
+    trailers = (await apiFetch("/trailers")).map(mapApiTrailer);
+    trailerUtil = null;
+    alert(`Imported ${out.weeksWritten} trailer-weeks; ${out.trailersCreated} trailer record(s) created.`);
+  } catch (err) { alert("Import failed: " + err.message); }
+  render();
+}
+async function setTicketTrailer(ticketId, trailerId) {
+  try {
+    const row = await apiFetch(`/tickets/${encodeURIComponent(ticketId)}/trailer`, { method: "PATCH", body: JSON.stringify({ trailerId: trailerId || null }) });
+    absorbTicket(row); trailerUtil = null;
+    if (currentRoute === "ticket" && currentTicketId === ticketId) await openTicket(ticketId); else render();
+  } catch (err) { alert("Couldn't save trailer: " + err.message); }
 }
 function viewFreightProfitability() {
   const rows = freightLoads.map(f => ({ ...f, profit: f.revenue - f.cost, margin: (f.revenue - f.cost) / f.revenue * 100 }));
