@@ -76,10 +76,25 @@ individual grant) includes it; everything else is open to any logged-in user.
 - `GET/POST/PATCH /vendors`, `/customers`
 - `GET/POST /carriers`
 - `GET/POST /contracts` (+ `PATCH /contracts/:id/rename`), `/purchase-orders`
-- `GET/PATCH /bank-accounts` — PATCH needs `editBankAccounts`
-- `GET/POST /tickets` — the core transactional endpoint described above
+- `GET/PATCH /bank-accounts` — PATCH (`startingBalance`, `nextCheckNumber`) needs `editBankAccounts`
+- `GET/POST /tickets` — the core transactional endpoint described above. Buy tickets post as
+  `Held`; sell tickets as `Closed`. `GET /tickets` filters: `yard, type, commodity, status, paid,
+  vendorId, customerId, q`. `GET /tickets/:id` returns the ticket plus its remittance and a
+  `timeline` (audit entries with the user's name).
+- `POST /tickets/:id/pay-later` (`payRemittances`) — Held → Closed, unpaid, to AP. Refused for walk-ins.
+- `POST /tickets/:id/pay` (`payRemittances`) — cuts a one-line Check/ACH for this ticket now.
+  Body: `method, checkNumber?, account?, payee?` (payee required for a walk-in). Check numbers are
+  auto-assigned from the account's `next_check_number` unless typed; a typed number already used
+  on that account is refused.
+- `POST /tickets/:id/void` (`voidTickets`) — body `reason`; reverses inventory; a paid ticket must
+  have its remittance voided first.
 - `GET /inventory/balances`, `/inventory/ledger`, `/inventory/negative`
-- `GET/POST /remittances` (+ `POST /remittances/:id/void`) — both POSTs need `payRemittances`
+- `GET/POST /remittances`, `GET /remittances/:id`, `PATCH /remittances/:id` (printed / checkPrinted /
+  emailed / cleared flags), `POST /remittances/:id/void` (body `reason`) — writes need `payRemittances`
+- `GET /search?q=` — tickets (id, party, hold description, amount), dealers and customers (name,
+  phone), and checks (number, payee) in one answer
+
+Every action on a ticket writes an `audit_log` row (`src/audit.js`); the ticket timeline is those rows.
 
 New permission keys must be added in three places: the role seeds in `db/seed.js`, a new
 migration that grants them to the existing production roles (see `001_initial_schema.sql`'s last

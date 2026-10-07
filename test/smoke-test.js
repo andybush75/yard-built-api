@@ -116,6 +116,71 @@ async function main() {
   const doubleVoid = await req("POST", `/remittances/${remit.body.id}/void`, { token });
   assert(doubleVoid.status === 409, "voiding the same remittance twice is rejected");
 
+  // ---- Hold → Cashier → Pay workflow ----
+  assert(buy.body.status === "Held", "a new buy ticket posts as Held (waits at the cashier)");
+  assert(sell.body.status === "Closed", "a new sell ticket posts as Closed");
+  const cash = await req("POST", "/tickets", { token, body: { type: "buy", date: "2026-10-02", yard: "COLBY", partyName: "x", commodity: "HMS2", netWeight: 1, price: 0.01, payment: "Cash" } });
+  assert(cash.status === 400, "Cash is not an accepted payment method (Check/ACH only)");
+
+  // `buy` is a walk-in: it was paid on `remit`, then that remittance was voided, so it is now
+  // Closed and unpaid. Paying it again through the cashier route needs a typed payee.
+  const noPayee = await req("POST", `/tickets/${buy.body.id}/pay`, { token, body: { method: "Check", date: "2026-10-02" } });
+  assert(noPayee.status === 400, "paying a walk-in without a payee name is rejected");
+  const walkPay = await req("POST", `/tickets/${buy.body.id}/pay`, { token, body: { method: "Check", payee: "Walk-in Joe", date: "2026-10-02" } });
+  assert(walkPay.status === 200 && walkPay.body.ticket.paid === true && walkPay.body.ticket.status === "Closed", "cashier Pay closes and pays the ticket in one step");
+  assert(walkPay.body.remittance.payee === "Walk-in Joe" && walkPay.body.remittance.check_number, "Pay cut a one-line check to the typed payee with an auto-assigned number");
+  const firstCheck = parseInt(walkPay.body.remittance.check_number, 10);
+  assert(parseInt(remit.body.check_number, 10) + 1 === firstCheck, `check numbers are sequential per account (${remit.body.check_number} then ${firstCheck})`);
+  const dupCheck = await req("POST", `/tickets/${linked.body.id}/pay`, { token, body: { method: "Check", checkNumber: String(firstCheck), date: "2026-10-02" } });
+  assert(dupCheck.status === 409, "a typed check number already used on that account is rejected");
+
+  // `linked` has a dealer record and is Held: Pay Later sends it to AP unpaid.
+  const payLater = await req("POST", `/tickets/${linked.body.id}/pay-later`, { token });
+  assert(payLater.status === 200 && payLater.body.status === "Closed" && payLater.body.paid === false && payLater.body.closed_by === me.body.id, "Pay Later closes a held dealer ticket unpaid and records who did it");
+  const payLaterAgain = await req("POST", `/tickets/${linked.body.id}/pay-later`, { token });
+  assert(payLaterAgain.status === 409, "Pay Later on a ticket that is no longer Held is rejected");
+  const walkHeld = await req("POST", "/tickets", { token, body: { type: "buy", date: "2026-10-02", yard: "COLBY", partyName: "Smoke walk-in 2", holdDesc: "red F-150", commodity: "HMS2", netWeight: 20, price: 0.09, payment: "Check" } });
+  const walkLater = await req("POST", `/tickets/${walkHeld.body.id}/pay-later`, { token });
+  assert(walkLater.status === 409, "Pay Later on a walk-in is refused (walk-ins are excluded from AP)");
+
+  // Ticket page: timeline with names.
+  const page = await req("GET", `/tickets/${buy.body.id}`, { token });
+  const actions = page.body.timeline.map((e) => e.action);
+  assert(page.status === 200 && actions[0] === "ticket.create" && actions.includes("ticket.pay") && actions.includes("ticket.unpay"), "ticket page carries a timeline: " + actions.join(" → "));
+  assert(page.body.timeline.every((e) => e.user_name === "Andy Bush"), "timeline entries name who did them");
+  assert(page.body.remittance && page.body.remittance.id === walkPay.body.remittance.id, "ticket page includes the remittance it was paid on");
+
+  // Void: paid tickets can't be voided; unpaid ones reverse inventory.
+  const voidPaid = await req("POST", `/tickets/${buy.body.id}/void`, { token, body: { reason: "test" } });
+  assert(voidPaid.status === 409, "a paid ticket can't be voided until its remittance is voided");
+  const balBeforeVoid = parseFloat((await req("GET", "/inventory/balances?yard=COLBY&commodity=HMS2", { token })).body[0].qty);
+  const noReason = await req("POST", `/tickets/${walkHeld.body.id}/void`, { token, body: {} });
+  assert(noReason.status === 400, "voiding needs a reason");
+  const voidOk = await req("POST", `/tickets/${walkHeld.body.id}/void`, { token, body: { reason: "Weighed wrong truck" } });
+  assert(voidOk.status === 200 && voidOk.body.status === "Voided" && voidOk.body.void_reason === "Weighed wrong truck", "an unpaid ticket can be voided with a reason");
+  const balAfterVoid = parseFloat((await req("GET", "/inventory/balances?yard=COLBY&commodity=HMS2", { token })).body[0].qty);
+  assert(Math.abs(balAfterVoid - (balBeforeVoid - 20)) < 0.001, "voiding a buy takes its weight back out of inventory");
+  const voidTwice = await req("POST", `/tickets/${walkHeld.body.id}/void`, { token, body: { reason: "again" } });
+  assert(voidTwice.status === 409, "a ticket can't be voided twice");
+  const payVoided = await req("POST", `/tickets/${walkHeld.body.id}/pay`, { token, body: { method: "ACH", payee: "x", date: "2026-10-02" } });
+  assert(payVoided.status === 409, "a voided ticket can't be paid");
+
+  // Check-register flags and search.
+  const flags = await req("PATCH", `/remittances/${walkPay.body.remittance.id}`, { token, body: { checkPrinted: true, cleared: true, clearedDate: "2026-10-05" } });
+  assert(flags.status === 200 && flags.body.check_printed === true && flags.body.cleared === true && String(flags.body.cleared_date).startsWith("2026-10-05"), "check-register flags can be set on a remittance");
+  const heldList = await req("GET", "/tickets?status=Held&yard=COLBY", { token });
+  assert(heldList.status === 200 && heldList.body.every((t) => t.status === "Held" && t.yard === "COLBY"), "tickets can be listed by status (the cashier queue)");
+  const search = await req("GET", "/search?q=red%20F-150", { token });
+  assert(search.status === 200 && search.body.tickets.some((t) => t.id === walkHeld.body.id), "search finds a ticket by its hold description");
+  const searchCheck = await req("GET", `/search?q=${firstCheck}`, { token });
+  assert(searchCheck.body.remittances.some((r) => r.id === walkPay.body.remittance.id), "search finds a check by its number");
+  const searchVendor = await req("GET", "/search?q=308-555-0198", { token });
+  assert(searchVendor.body.vendors.length >= 2, "search finds dealers by phone number");
+  const setNext = await req("PATCH", "/bank-accounts/COLBY", { token, body: { nextCheckNumber: 5000 } });
+  assert(setNext.status === 200 && setNext.body.next_check_number === 5000, "admin can set the next check number for an account");
+  const afterSet = await req("POST", `/tickets/${linked.body.id}/pay`, { token, body: { method: "Check", date: "2026-10-02" } });
+  assert(afterSet.status === 200 && afterSet.body.remittance.check_number === "5000", "the next check uses the newly set number");
+
   // Permission enforcement: a scale operator can post tickets but cannot cut checks or touch bank
   // accounts. Uses the demo-only operator seeded by db/seed.js.
   const opLogin = await req("POST", "/auth/login", { body: { email: "scale.demo@example.com", password: "changeme123" } });
