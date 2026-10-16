@@ -306,6 +306,9 @@ async function callClaude(body, apiKey) {
       "content-type": "application/json",
       "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
+      // Keys created at the organization level (not inside a workspace) must say which workspace
+      // to bill; keys created inside a workspace don't need this.
+      ...(process.env.ANTHROPIC_WORKSPACE_ID ? { "anthropic-workspace-id": process.env.ANTHROPIC_WORKSPACE_ID } : {}),
     },
     body: JSON.stringify(body),
   });
