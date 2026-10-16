@@ -13,21 +13,45 @@ router.get("/", requireAuth, async (req, res) => {
 });
 
 router.post("/", requireAuth, async (req, res) => {
-  const { id, vendorId, commodity, yard, committedQty, endDate, notes } = req.body || {};
+  const { id, vendorId, commodity, yard, committedQty, endDate, notes, receivedQty } = req.body || {};
   if (!id || !vendorId || !commodity || !yard || !committedQty || !endDate) {
     return res.status(400).json({ error: "id, vendorId, commodity, yard, committedQty, and endDate are required" });
   }
   try {
     const { rows } = await query(
-      `INSERT INTO purchase_orders (id, vendor_id, commodity, yard, committed_qty, end_date, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [id, vendorId, commodity, yard, committedQty, endDate, notes]
+      `INSERT INTO purchase_orders (id, vendor_id, commodity, yard, committed_qty, end_date, notes, received_qty)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8,0)) RETURNING *`,
+      [id, vendorId, commodity, yard, committedQty, endDate, notes || null, receivedQty]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
     if (err.code === "23505") return res.status(409).json({ error: `Purchase order ${id} already exists` });
     throw err;
   }
+});
+
+router.patch("/:id/rename", requireAuth, async (req, res) => {
+  const { newId } = req.body || {};
+  if (!newId) return res.status(400).json({ error: "newId is required" });
+  try {
+    const { rows } = await query("UPDATE purchase_orders SET id = $2 WHERE id = $1 RETURNING *", [req.params.id, newId]);
+    if (!rows.length) return res.status(404).json({ error: "Not found" });
+    res.json(rows[0]);
+  } catch (err) {
+    if (err.code === "23505") return res.status(409).json({ error: `Purchase order ${newId} already in use` });
+    throw err;
+  }
+});
+
+router.patch("/:id", requireAuth, async (req, res) => {
+  const { committedQty, endDate, notes } = req.body || {};
+  const { rows } = await query(
+    `UPDATE purchase_orders SET committed_qty = COALESCE($2, committed_qty), end_date = COALESCE($3, end_date), notes = COALESCE($4, notes)
+     WHERE id = $1 RETURNING *`,
+    [req.params.id, committedQty ?? null, endDate ?? null, notes ?? null]
+  );
+  if (!rows.length) return res.status(404).json({ error: "Not found" });
+  res.json(rows[0]);
 });
 
 module.exports = router;

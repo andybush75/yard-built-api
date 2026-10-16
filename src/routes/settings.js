@@ -1,6 +1,16 @@
 const express = require("express");
 const { query } = require("../db");
-const { requireAuth, requirePermission } = require("../middleware/auth");
+const { requireAuth, userCan } = require("../middleware/auth");
+
+// Pricing keys (tier margins, yard multipliers) are owned by whoever can edit pricing; everything
+// else still needs manageUsers.
+const PRICING_KEYS = new Set(["tierMargins", "yardMult"]);
+function canEditSettings(req, res, next) {
+  const keys = Object.keys(req.body || {});
+  const onlyPricing = keys.length && keys.every((k) => PRICING_KEYS.has(k));
+  if (userCan(req.user, "manageUsers") || (onlyPricing && userCan(req.user, "editPricing"))) return next();
+  return res.status(403).json({ error: "Missing permission: manageUsers" });
+}
 
 const router = express.Router();
 
@@ -13,7 +23,7 @@ router.get("/", requireAuth, async (req, res) => {
   res.json(out);
 });
 
-router.patch("/", requireAuth, requirePermission("manageUsers"), async (req, res) => {
+router.patch("/", requireAuth, canEditSettings, async (req, res) => {
   const body = req.body || {};
   const keys = Object.keys(body);
   if (!keys.length) return res.status(400).json({ error: "Send an object of { key: value }" });

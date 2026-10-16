@@ -37,7 +37,9 @@ router.post("/", requireAuth, requirePermission("addCommodity"), async (req, res
 
 // Editing master price / tier margins is its own permission, separate from creating a new commodity.
 router.patch("/:code", requireAuth, requirePermission("editPricing"), async (req, res) => {
-  const { name, category, lowThreshold, masterPrice, kioskShow, kioskColor, askPrice } = req.body || {};
+  const { name, category, lowThreshold, masterPrice, kioskShow, kioskColor, askPrice, unit, ferrous } = req.body || {};
+  if (unit !== undefined && !["lb", "net_ton", "each"].includes(unit)) return res.status(400).json({ error: "unit must be lb, net_ton or each" });
+  if (masterPrice !== undefined && !(Number(masterPrice) >= 0)) return res.status(400).json({ error: "masterPrice must be a number >= 0" });
   const { rows } = await query(
     `UPDATE commodities SET
        name = COALESCE($2, name),
@@ -46,9 +48,11 @@ router.patch("/:code", requireAuth, requirePermission("editPricing"), async (req
        master_price = COALESCE($5, master_price),
        kiosk_show = COALESCE($6, kiosk_show),
        kiosk_color = COALESCE($7, kiosk_color),
-       ask_price = COALESCE($8, ask_price)
+       ask_price = COALESCE($8, ask_price),
+       unit = COALESCE($9, unit),
+       ferrous = COALESCE($10, ferrous)
      WHERE code = $1 RETURNING *`,
-    [req.params.code, name, category, lowThreshold, masterPrice, kioskShow, kioskColor, askPrice]
+    [req.params.code, name, category, lowThreshold, masterPrice, kioskShow, kioskColor, askPrice, unit ?? null, ferrous ?? null]
   );
   if (!rows.length) return res.status(404).json({ error: "Not found" });
   res.json(rows[0]);
