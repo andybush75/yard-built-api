@@ -19,7 +19,7 @@ async function requireAuth(req, res, next) {
   try {
     const payload = jwt.verify(token, JWT_SECRET);
     const { rows } = await query(
-      `SELECT u.id, u.name, u.email, u.role_id, u.grants, u.revokes, u.active, r.name AS role_name, r.permissions AS role_permissions
+      `SELECT u.id, u.name, u.email, u.role_id, u.grants, u.revokes, u.active, u.yards, u.home_yard, u.must_change_password, r.name AS role_name, r.permissions AS role_permissions
        FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`,
       [payload.sub]
     );

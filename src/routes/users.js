@@ -8,9 +8,25 @@ const { managersRemainAfter } = require("../adminGuard");
 const router = express.Router();
 
 const MIN_PASSWORD = 8;
+const YARD_CODES = ["SB", "HAYS", "COLBY", "RC"];
+
+// Validates the profile fields shared by create and update. Returns an error string or null.
+function profileError({ homeYard, yards, phone, title }) {
+  if (homeYard !== undefined && homeYard !== null && homeYard !== "" && !YARD_CODES.includes(homeYard)) return `homeYard must be one of ${YARD_CODES.join(", ")}`;
+  if (yards !== undefined) {
+    if (!Array.isArray(yards)) return "yards must be a list of yard codes (empty list = all yards)";
+    const bad = yards.filter((y) => !YARD_CODES.includes(y));
+    if (bad.length) return `Unknown yard code(s): ${bad.join(", ")}`;
+    if (homeYard && yards.length && !yards.includes(homeYard)) return "homeYard must be one of the yards the user can access";
+  }
+  if (phone !== undefined && phone !== null && String(phone).length > 40) return "phone is too long";
+  if (title !== undefined && title !== null && String(title).length > 80) return "title is too long";
+  return null;
+}
 // Never return password_hash. Any logged-in user can see the directory (names show up as work-order
 // assignees, "requested by", etc.); only manageUsers can change anything.
 const SELECT_USER = `SELECT u.id, u.name, u.email, u.role_id, u.grants, u.revokes, u.active, u.created_at,
+                            u.title, u.phone, u.home_yard, u.yards, u.must_change_password, u.last_login_at,
                             r.name AS role_name
                      FROM users u JOIN roles r ON r.id = u.role_id`;
 
@@ -20,7 +36,7 @@ router.get("/", requireAuth, async (req, res) => {
 });
 
 router.post("/", requireAuth, requirePermission("manageUsers"), async (req, res) => {
-  const { name, email, password, roleId, grants = [], revokes = [] } = req.body || {};
+  const { name, email, password, roleId, grants = [], revokes = [], title, phone, homeYard, yards = [] } = req.body || {};
   if (!name || !email || !password || !roleId) {
     return res.status(400).json({ error: "name, email, password, and roleId are required" });
   }
@@ -30,12 +46,18 @@ router.post("/", requireAuth, requirePermission("manageUsers"), async (req, res)
   if (bad.length) return res.status(400).json({ error: `Unknown permission key(s): ${bad.join(", ")}` });
   const { rows: roleRows } = await query("SELECT id FROM roles WHERE id = $1", [roleId]);
   if (!roleRows.length) return res.status(400).json({ error: "roleId does not match any role" });
+  const perr = profileError({ homeYard, yards, phone, title });
+  if (perr) return res.status(400).json({ error: perr });
 
+  // New accounts always start with a temporary password: the person is made to pick their own
+  // the first time they sign in, so the admin never needs to know anyone's real password.
   const hash = await bcrypt.hash(String(password), 10);
   try {
     const { rows } = await query(
-      `INSERT INTO users (name, email, password_hash, role_id, grants, revokes) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-      [name.trim(), email.trim().toLowerCase(), hash, roleId, grants, revokes]
+      `INSERT INTO users (name, email, password_hash, role_id, grants, revokes, title, phone, home_yard, yards, must_change_password)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true) RETURNING id`,
+      [name.trim(), email.trim().toLowerCase(), hash, roleId, grants, revokes, title ? String(title).trim() : null,
+       phone ? String(phone).trim() : null, homeYard || null, yards]
     );
     const { rows: out } = await query(`${SELECT_USER} WHERE u.id = $1`, [rows[0].id]);
     res.status(201).json(out[0]);
@@ -49,8 +71,10 @@ router.post("/", requireAuth, requirePermission("manageUsers"), async (req, res)
 // Two rules: you can't change your own access (ask another admin), and no change may leave the
 // company with zero active users who can manage users.
 router.patch("/:id", requireAuth, requirePermission("manageUsers"), async (req, res) => {
-  const { name, email, roleId, grants, revokes, active, password } = req.body || {};
-  const touchesAccess = roleId !== undefined || grants !== undefined || revokes !== undefined || active !== undefined;
+  const { name, email, roleId, grants, revokes, active, password, title, phone, homeYard, yards } = req.body || {};
+  const perr = profileError({ homeYard, yards, phone, title });
+  if (perr) return res.status(400).json({ error: perr });
+  const touchesAccess = roleId !== undefined || grants !== undefined || revokes !== undefined || active !== undefined || yards !== undefined;
   if (touchesAccess && req.params.id === req.user.id) {
     return res.status(400).json({ error: "You can't change your own role, access, or active status — ask another admin" });
   }
@@ -80,14 +104,24 @@ router.patch("/:id", requireAuth, requirePermission("manageUsers"), async (req, 
       }
     }
     const hash = password !== undefined ? await bcrypt.hash(String(password), 10) : null;
+    // An admin reset is a temporary password too: the user has to choose their own next sign-in.
     await client.query(
       `UPDATE users SET
          name = COALESCE($2, name), email = COALESCE($3, email), role_id = COALESCE($4, role_id),
          grants = COALESCE($5, grants), revokes = COALESCE($6, revokes), active = COALESCE($7, active),
-         password_hash = COALESCE($8, password_hash)
+         password_hash = COALESCE($8, password_hash),
+         must_change_password = CASE WHEN $8::text IS NOT NULL THEN true ELSE must_change_password END,
+         title = CASE WHEN $9::boolean THEN $10 ELSE title END,
+         phone = CASE WHEN $11::boolean THEN $12 ELSE phone END,
+         home_yard = CASE WHEN $13::boolean THEN $14 ELSE home_yard END,
+         yards = COALESCE($15, yards)
        WHERE id = $1`,
       [req.params.id, name ? name.trim() : null, email ? email.trim().toLowerCase() : null, roleId ?? null,
-       grants ?? null, revokes ?? null, active === undefined ? null : !!active, hash]
+       grants ?? null, revokes ?? null, active === undefined ? null : !!active, hash,
+       title !== undefined, title ? String(title).trim() : null,
+       phone !== undefined, phone ? String(phone).trim() : null,
+       homeYard !== undefined, homeYard || null,
+       yards ?? null]
     );
     await client.query("COMMIT");
     const { rows: out } = await query(`${SELECT_USER} WHERE u.id = $1`, [req.params.id]);
