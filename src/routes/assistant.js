@@ -190,7 +190,9 @@ async function runTool(name, input, ctx) {
          WHERE t.id ILIKE $1`,
         [input.id]
       );
-      return rows[0] || { error: `No ticket ${input.id}` };
+      if (!rows[0]) return { error: `No ticket ${input.id}` };
+      const { id_snapshot, ...safe } = rows[0]; // seller ID details stay out of the assistant entirely
+      return safe;
     }
     case "find_party": {
       const like = `%${input.q}%`;

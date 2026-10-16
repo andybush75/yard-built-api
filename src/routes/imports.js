@@ -31,7 +31,6 @@ const ALIASES = {
   terms: ["terms", "paymentterms", "netterms"],
   businessExempt: ["businessexempt", "business", "commercial", "iscommercial", "type", "customertype", "accounttype"],
   externalId: ["externalid", "id", "customerid", "vendorid", "customernumber", "customer#", "custno", "custid", "number", "accountnumber", "acct#", "acctno"],
-  dl: ["dl", "driverslicense", "driverlicense", "license", "idnumber"],
 };
 const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9#-]/g, "");
 const ALIAS_INDEX = {};
@@ -124,7 +123,7 @@ router.post("/parties", requireAuth, requirePermission("manageUsers"), async (re
       if (p.length >= 7) seenPhone.add(p); else seenName.add(n);
 
       // Vendors have no address column yet, so a dealer's address rides along in notes.
-      const notesParts = [r.notes, kind === "vendor" && r.address ? r.address : null, r.externalId ? `SD#${r.externalId}` : null, r.dl ? `DL ${r.dl}` : null].filter(Boolean);
+      const notesParts = [r.notes, kind === "vendor" && r.address ? r.address : null, r.externalId ? `SD#${r.externalId}` : null].filter(Boolean); // ID numbers never land in notes — they go through /vendors/:id/identity, encrypted
       const fields = {
         name: String(r.name).trim(), phone: fmtPhone(r.phone), email: r.email ? String(r.email).trim().toLowerCase() : null,
         address: r.address || null, notes: notesParts.length ? notesParts.join(" · ") : null,

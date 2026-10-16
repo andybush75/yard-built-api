@@ -12,6 +12,7 @@ const PERMISSION_KEYS = [
   "addCommodity",
   "payRemittances",
   "editBankAccounts",
+  "viewIds",
 ];
 
 function unknownKeys(list) {

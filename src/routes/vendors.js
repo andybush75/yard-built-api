@@ -4,13 +4,15 @@ const { requireAuth, requirePermission } = require("../middleware/auth");
 
 const router = express.Router();
 
+// id_number_enc / dob_enc never leave the server through the list; the identity routes handle them.
+const VENDOR_COLS = "id, name, phone, email, tier, notes, smartphone, on_price_list, auto_send, last_sent, created_at, active, address, id_type, id_last4, id_state, id_expires, plate, plate_state, id_updated_at";
 router.get("/", requireAuth, async (req, res) => {
-  const { rows } = await query("SELECT * FROM vendors ORDER BY name");
+  const { rows } = await query(`SELECT ${VENDOR_COLS} FROM vendors ORDER BY name`);
   res.json(rows);
 });
 
 router.get("/:id", requireAuth, async (req, res) => {
-  const { rows } = await query("SELECT * FROM vendors WHERE id = $1", [req.params.id]);
+  const { rows } = await query(`SELECT ${VENDOR_COLS} FROM vendors WHERE id = $1`, [req.params.id]);
   if (!rows.length) return res.status(404).json({ error: "Not found" });
   res.json(rows[0]);
 });
@@ -21,7 +23,7 @@ router.post("/", requireAuth, async (req, res) => {
   const { rows } = await query(
     `INSERT INTO vendors (name, phone, email, tier, notes, smartphone, on_price_list, auto_send)
      VALUES ($1,$2,$3,COALESCE($4,'scale'),$5,COALESCE($6,false),COALESCE($7,false),COALESCE($8,'off'))
-     RETURNING *`,
+     RETURNING ${VENDOR_COLS}`,
     [name, phone, email, tier, notes, smartphone, onPriceList, autoSend]
   );
   res.status(201).json(rows[0]);
@@ -36,7 +38,7 @@ router.patch("/:id", requireAuth, async (req, res) => {
        tier = COALESCE($5, tier), notes = COALESCE($6, notes), smartphone = COALESCE($7, smartphone),
        on_price_list = COALESCE($8, on_price_list), auto_send = COALESCE($9, auto_send),
        active = COALESCE($10, active), address = COALESCE($11, address)
-     WHERE id = $1 RETURNING *`,
+     WHERE id = $1 RETURNING ${VENDOR_COLS}`,
     [req.params.id, name !== undefined ? String(name).trim() : null, phone ?? null, email ?? null, tier ?? null, notes ?? null,
      smartphone ?? null, onPriceList ?? null, autoSend ?? null, active === undefined ? null : !!active, address ?? null]
   );
@@ -58,5 +60,7 @@ router.delete("/:id", requireAuth, requirePermission("manageUsers"), async (req,
   await query("DELETE FROM vendors WHERE id = $1", [req.params.id]);
   res.status(204).end();
 });
+
+router.use("/:id/identity", require("./partyIdentity"));
 
 module.exports = router;

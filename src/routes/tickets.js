@@ -176,11 +176,17 @@ router.post("/", requireAuth, async (req, res) => {
     const total = Math.round(netWeightNum * priceNum * 100) / 100;
     const status = type === "buy" ? "Held" : "Closed";
 
+    // Masked snapshot of the seller's ID as it stands right now (never the full number).
+    let idSnapshot = null;
+    if (type === "buy" && vendorId) {
+      const { rows: idr } = await client.query("SELECT id_type, id_last4, id_state, id_expires, plate, plate_state FROM vendors WHERE id = $1", [vendorId]);
+      if (idr.length && idr[0].id_last4) idSnapshot = { type: idr[0].id_type, last4: idr[0].id_last4, state: idr[0].id_state, expires: idr[0].id_expires, plate: idr[0].plate, plateState: idr[0].plate_state };
+    }
     const { rows: ticketRows } = await client.query(
       `INSERT INTO tickets (id, type, date, yard, vendor_id, customer_id, party_name, hold_desc, commodity, tier,
                              net_weight, price, total, payment, status, cogs_per_lb, contract_id, po_id, shipment_id,
-                             created_by, closed_at, closed_by, trailer_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+                             created_by, closed_at, closed_by, trailer_id, id_snapshot)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
        RETURNING *`,
       [
         ticketId, type, date, yard, vendorId || null, customerId || null,
@@ -188,7 +194,7 @@ router.post("/", requireAuth, async (req, res) => {
         netWeightNum, priceNum, total, payment, status,
         cogsPerLb, contractId || null, poId || null, shipmentId || null,
         req.user.id, status === "Closed" ? new Date() : null, status === "Closed" ? req.user.id : null,
-        trailerId || null,
+        trailerId || null, idSnapshot,
       ]
     );
 
