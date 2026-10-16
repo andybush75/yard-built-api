@@ -6,6 +6,8 @@ const cors = require("cors");
 
 const app = express();
 app.use(cors());
+// Documents carry base64 files up to 10 MB; everything else stays at 5 MB.
+app.use("/documents", express.json({ limit: "15mb" }));
 app.use(express.json({ limit: "5mb" })); // bulk imports (vendor/customer lists) can exceed the 100kb default
 
 app.get("/health", (req, res) => res.json({ ok: true, service: "yard-built-api", time: new Date().toISOString() }));
@@ -25,6 +27,7 @@ app.use("/contracts", require("./routes/contracts"));
 app.use("/purchase-orders", require("./routes/purchaseOrders"));
 app.use("/bank-accounts", require("./routes/bankAccounts"));
 app.use("/positive-pay", require("./routes/positivePay"));
+app.use("/documents", require("./routes/documents").router);
 app.use("/tickets", require("./routes/tickets"));
 app.use("/inventory", require("./routes/inventory"));
 app.use("/remittances", require("./routes/remittances"));

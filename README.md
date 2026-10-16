@@ -89,6 +89,12 @@ individual grant) includes it; everything else is open to any logged-in user.
 - `POST /tickets/:id/void` (`voidTickets`) — body `reason`; reverses inventory; a paid ticket must
   have its remittance voided first.
 - `GET /inventory/balances`, `/inventory/ledger`, `/inventory/negative`
+- **Documents**: `GET /documents?entityType=&entityId=&category=&yard=&q=&expiringDays=` (metadata),
+  `GET /documents/summary`, `POST /documents` (base64 `dataUrl` + title/category/entityType/entityId/
+  yard/docDate/expiresOn/notes; PDF, images, Word/Excel, CSV; 10 MB), `GET /documents/:id/file`
+  (`?download=1`), `PATCH /documents/:id`, `DELETE /documents/:id` (soft; own uploads for 24 h, else
+  `manageDocuments`). Attachable to ticket | vendor | customer | contract | po | trailer | company.
+  Files are BYTEA in Postgres for now — the same "step one" as seller IDs.
 - **Positive Pay** (bank check-fraud control): `GET /positive-pay/pending?account=SB` lists checks
   issued or voided since the last file; `POST /positive-pay/batches { account }` (`payRemittances`)
   builds the bank's issue file for everything pending, records what was reported (each check is

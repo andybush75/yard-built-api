@@ -13,6 +13,7 @@ const PERMISSION_KEYS = [
   "payRemittances",
   "editBankAccounts",
   "viewIds",
+  "manageDocuments",
 ];
 
 function unknownKeys(list) {
