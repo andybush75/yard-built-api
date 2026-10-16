@@ -119,6 +119,18 @@ migration that grants them to the existing production roles (see `001_initial_sc
 block for the pattern), and the `PERMISSIONS` list in `src/public/index.html` so the role editor
 can show them.
 
+## In-app assistant (Claude)
+
+`POST /assistant/chat` is a Claude-powered assistant that lives behind the orange **YB** bubble in the
+bottom-right of the app. The browser never talks to Anthropic; it sends the conversation to this
+route, which calls the Claude API with a set of **read-only** tools (inventory, tickets, parties,
+prices, volumes, payables, contracts, open-a-screen) that run as the signed-in user against our
+Postgres, and returns the answer. Nothing in `src/routes/assistant.js` writes to the database.
+
+Setup: create a key at platform.claude.com and set `ANTHROPIC_API_KEY` in Railway's Variables tab
+(optionally `ASSISTANT_MODEL`). Without the key the route answers 503 and the UI hides the bubble.
+`GET /assistant/status` reports whether it's configured.
+
 ## Changing the database
 
 The schema lives in `migrations/`, one numbered SQL file per change. `npm run migrate` applies
