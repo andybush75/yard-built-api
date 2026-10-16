@@ -24,6 +24,7 @@ app.use("/carriers", require("./routes/carriers"));
 app.use("/contracts", require("./routes/contracts"));
 app.use("/purchase-orders", require("./routes/purchaseOrders"));
 app.use("/bank-accounts", require("./routes/bankAccounts"));
+app.use("/positive-pay", require("./routes/positivePay"));
 app.use("/tickets", require("./routes/tickets"));
 app.use("/inventory", require("./routes/inventory"));
 app.use("/remittances", require("./routes/remittances"));
