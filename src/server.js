@@ -6,7 +6,7 @@ const cors = require("cors");
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "5mb" })); // bulk imports (vendor/customer lists) can exceed the 100kb default
 
 app.get("/health", (req, res) => res.json({ ok: true, service: "yard-built-api", time: new Date().toISOString() }));
 
