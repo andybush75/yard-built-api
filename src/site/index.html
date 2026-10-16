@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yard-Built — Scrap yard software, built in a scrap yard</title>
+<meta name="description" content="Yard-Built runs the scale house, the cashier window and the back office of a scrap yard: tickets, dealer pricing, seller ID, checks and Positive Pay, inventory, shipping and documents. Developed by Langer Industrial.">
+<meta name="theme-color" content="#1b2433">
+<link rel="icon" href="/icon.png">
+<link rel="apple-touch-icon" href="/icon.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Yard-Built">
+<meta property="og:title" content="Yard-Built — Scrap yard software, built in a scrap yard">
+<meta property="og:description" content="Tickets, dealer pricing, seller ID, checks and Positive Pay, inventory, shipping and documents in one system. Developed by Langer Industrial.">
+<meta property="og:url" content="https://www.yardbuilt.net/">
+<meta property="og:image" content="https://www.yardbuilt.net/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --steel: #eef1f4;      /* galvanized sheet */
+    --steel-2: #dfe4ea;
+    --ink: #1b2433;        /* deep navy, from the app chrome */
+    --ink-2: #4a5568;
+    --blue: #2a7de1;       /* the Y */
+    --indigo: #4a3aa8;     /* the B */
+    --hivis: #f2c230;      /* scale display only */
+    --paper: #ffffff;
+    --rule: #c9d1db;
+    --wide: "wdth" 125;
+    --max: 1160px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--steel); color: var(--ink);
+    font-family: "Archivo", system-ui, sans-serif; font-size: 18px; line-height: 1.55;
+    font-variation-settings: "wdth" 100; -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  :focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; border-radius: 4px; }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 28px; }
+
+  /* Header */
+  header.top { position: sticky; top: 0; z-index: 10; background: rgba(238,241,244,.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--rule); }
+  header.top .wrap { display: flex; align-items: center; gap: 28px; height: 68px; }
+  .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 800; font-variation-settings: var(--wide); font-size: 19px; letter-spacing: -.01em; }
+  .brand img { width: 34px; height: 34px; }
+  nav.links { display: flex; gap: 24px; margin-left: 12px; font-size: 16px; }
+  nav.links a { text-decoration: none; color: var(--ink-2); }
+  nav.links a:hover { color: var(--ink); }
+  .actions { margin-left: auto; display: flex; gap: 10px; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; height: 44px; padding: 0 20px; border-radius: 8px; font: inherit; font-size: 16px; font-weight: 700; text-decoration: none; cursor: pointer; border: 2px solid transparent; }
+  .btn.primary { background: var(--indigo); color: #fff; }
+  .btn.primary:hover { background: #3d2f92; }
+  .btn.line { border-color: var(--ink); color: var(--ink); background: transparent; }
+  .btn.line:hover { background: var(--ink); color: #fff; }
+
+  /* Hero */
+  .hero { padding: 72px 0 88px; }
+  .hero .wrap { display: grid; grid-template-columns: 1.05fr .95fr; gap: 56px; align-items: center; }
+  h1 { font-size: clamp(42px, 5.6vw, 74px); line-height: 1.02; margin: 0 0 24px; font-weight: 850; font-variation-settings: var(--wide); letter-spacing: -.025em; }
+  .lede { font-size: 21px; color: var(--ink-2); max-width: 34em; margin: 0 0 32px; }
+  .hero .cta { display: flex; gap: 12px; flex-wrap: wrap; }
+
+  /* The scale head + ticket */
+  .scale { background: var(--ink); border-radius: 18px; padding: 22px 24px 26px; box-shadow: 0 1px 0 #0003, 0 24px 48px -24px #1b243399; color: #c8d0dc; }
+  .scale-top { display: flex; justify-content: space-between; align-items: center; font-size: 14px; color: #8f9bb0; margin-bottom: 10px; }
+  .lamp { display: inline-flex; align-items: center; gap: 7px; }
+  .lamp i { width: 9px; height: 9px; border-radius: 50%; background: #3a4558; transition: background .3s, box-shadow .3s; }
+  .lamp.on i { background: #4ade80; box-shadow: 0 0 10px #4ade80; }
+  .readout { background: #0d121b; border-radius: 10px; padding: 16px 20px 14px; display: flex; align-items: baseline; justify-content: flex-end; gap: 14px; border: 1px solid #2a3446; }
+  .readout .mode { margin-right: auto; color: #8f9bb0; font-size: 15px; }
+  .readout .num { font-size: clamp(48px, 6vw, 72px); font-weight: 700; color: var(--hivis); font-variant-numeric: tabular-nums; letter-spacing: .02em; line-height: 1; text-shadow: 0 0 18px #f2c23055; font-variation-settings: "wdth" 112; }
+  .readout .unit { color: var(--hivis); font-size: 20px; font-weight: 700; }
+  .ticket { background: var(--paper); color: var(--ink); border-radius: 6px; margin: 18px 8px 0; padding: 18px 20px 16px; font-size: 15px; transform-origin: top; transform: scaleY(0); opacity: 0; transition: transform .5s cubic-bezier(.2,.8,.2,1), opacity .3s; background-image: radial-gradient(circle at 8px 0, transparent 6px, #fff 6.5px); }
+  .ticket.out { transform: scaleY(1); opacity: 1; }
+  .ticket h3 { margin: 0 0 2px; font-size: 16px; font-variation-settings: var(--wide); }
+  .ticket .sub { color: var(--ink-2); font-size: 14px; margin-bottom: 12px; }
+  .ticket table { width: 100%; border-collapse: collapse; }
+  .ticket td { padding: 4px 0; border-bottom: 1px dashed var(--rule); }
+  .ticket td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  .ticket tr.total td { border-bottom: 0; padding-top: 10px; font-weight: 800; font-size: 17px; }
+  .ticket .foot { display: flex; justify-content: space-between; margin-top: 10px; font-size: 13px; color: var(--ink-2); }
+  .ok { color: #15803d; font-weight: 700; }
+
+  /* Sections */
+  section { padding: 88px 0; }
+  section.band { background: var(--paper); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+  h2 { font-size: clamp(32px, 3.6vw, 46px); line-height: 1.08; margin: 0 0 14px; font-weight: 800; font-variation-settings: var(--wide); letter-spacing: -.02em; max-width: 18em; }
+  .intro { color: var(--ink-2); max-width: 38em; margin: 0 0 48px; font-size: 19px; }
+
+  /* A load's path — a real sequence, so it is numbered */
+  ol.path { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; counter-reset: step; position: relative; }
+  ol.path::before { content: ""; position: absolute; left: 23px; right: calc(20% - 23px); top: 21px; height: 4px; background: linear-gradient(90deg, var(--blue), var(--indigo)); border-radius: 2px; }
+  ol.path li { position: relative; padding-right: 22px; counter-increment: step; }
+  ol.path li::before { content: counter(step); position: relative; display: grid; place-items: center; width: 46px; height: 46px; border-radius: 50%; background: var(--paper); border: 4px solid var(--blue); font-weight: 800; font-size: 18px; margin-bottom: 18px; }
+  ol.path li:nth-child(n+3)::before { border-color: #3a5cc8; }
+  ol.path li:nth-child(n+5)::before { border-color: var(--indigo); }
+  ol.path h3 { margin: 0 0 8px; font-size: 21px; font-variation-settings: var(--wide); }
+  ol.path p { margin: 0; color: var(--ink-2); font-size: 16px; }
+
+  /* Feature list: two columns of plain statements, divided by rules */
+  .features { display: grid; grid-template-columns: 1fr 1fr; column-gap: 64px; }
+  .feature { padding: 26px 0; border-top: 2px solid var(--ink); }
+  .feature h3 { margin: 0 0 8px; font-size: 21px; font-variation-settings: "wdth" 112; }
+  .feature p { margin: 0; color: var(--ink-2); font-size: 17px; max-width: 32em; }
+  .feature q { display: block; margin-top: 12px; padding: 10px 14px; background: var(--steel); border-left: 4px solid var(--blue); border-radius: 0 6px 6px 0; font-style: normal; color: var(--ink); font-size: 16px; quotes: none; }
+
+  /* Story */
+  .story .wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: start; }
+  .yards { list-style: none; padding: 0; margin: 0; }
+  .yards li { display: flex; justify-content: space-between; align-items: baseline; padding: 16px 0; border-bottom: 1px solid var(--rule); font-size: 20px; font-weight: 700; font-variation-settings: "wdth" 112; }
+  .yards li span { font-weight: 400; color: var(--ink-2); font-size: 16px; font-variation-settings: "wdth" 100; }
+
+  /* Demo form */
+  .demo .wrap { display: grid; grid-template-columns: .85fr 1.15fr; gap: 64px; align-items: start; }
+  form.req { background: var(--paper); border: 1px solid var(--rule); border-radius: 14px; padding: 28px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px 18px; }
+  form.req label { display: block; font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+  form.req .opt { font-weight: 400; color: var(--ink-2); }
+  form.req input, form.req select, form.req textarea { width: 100%; font: inherit; font-size: 16px; padding: 11px 12px; border: 1.5px solid var(--rule); border-radius: 8px; background: #fff; color: var(--ink); }
+  form.req input:focus, form.req select:focus, form.req textarea:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px #2a7de133; }
+  form.req .full { grid-column: 1 / -1; }
+  form.req textarea { min-height: 96px; resize: vertical; }
+  form.req .hp { position: absolute; left: -9999px; }
+  .form-msg { grid-column: 1 / -1; font-size: 16px; margin: 0; min-height: 1.4em; }
+  .form-msg.err { color: #b42318; }
+  .form-msg.good { color: #15803d; font-weight: 700; }
+  .contact-alt { color: var(--ink-2); font-size: 17px; }
+
+  footer { padding: 40px 0 56px; color: var(--ink-2); font-size: 15px; }
+  footer .wrap { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
+  footer .brand { font-size: 16px; color: var(--ink); }
+  footer .grow { margin-left: auto; display: flex; gap: 20px; }
+
+  @media (max-width: 980px) {
+    .hero .wrap, .story .wrap, .demo .wrap { grid-template-columns: 1fr; gap: 40px; }
+    ol.path { grid-template-columns: 1fr; gap: 28px; }
+    ol.path::before { left: 21px; right: auto; top: 22px; bottom: 22px; width: 4px; height: auto; background: linear-gradient(180deg, var(--blue), var(--indigo)); }
+    ol.path li { display: grid; grid-template-columns: 46px 1fr; column-gap: 18px; padding-right: 0; }
+    ol.path li::before { grid-row: span 2; margin-bottom: 0; }
+    .features { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 720px) {
+    body { font-size: 17px; }
+    nav.links { display: none; }
+    .wrap { padding: 0 16px; }
+    header.top .wrap { gap: 12px; }
+    .actions .btn { height: 40px; padding: 0 14px; font-size: 15px; }
+    .actions .btn.primary { display: none; }
+    .hero { padding: 40px 0 56px; }
+    section { padding: 60px 0; }
+    form.req { grid-template-columns: 1fr; padding: 20px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .ticket { transition: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/icon.png" alt="">Yard-Built</a>
+    <nav class="links" aria-label="Sections">
+      <a href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#about">About</a>
+    </nav>
+    <div class="actions">
+      <a class="btn line" href="https://app.yardbuilt.net/">Log in</a>
+      <a class="btn primary" href="#demo">Request a demo</a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="hero">
+    <div class="wrap">
+      <div>
+        <h1>Scrap yard software, built in a scrap yard.</h1>
+        <p class="lede">Yard-Built runs the scale house, the cashier window and the back office in one system. It's developed inside Langer Industrial's yards in Nebraska, Kansas and South Dakota, around real tickets, real dealers and real check runs.</p>
+        <div class="cta">
+          <a class="btn primary" href="#demo">Request a demo</a>
+          <a class="btn line" href="https://app.yardbuilt.net/">Log in</a>
+        </div>
+      </div>
+
+      <div class="scale" aria-label="Example: a load weighed in and its ticket">
+        <div class="scale-top"><span>Inbound scale, Scottsbluff</span><span class="lamp" id="lamp"><i></i><span id="lamp-text">Settling</span></span></div>
+        <div class="readout" role="img" aria-label="Gross weight 42,380 pounds">
+          <span class="mode">Gross</span><span class="num" id="weight">0</span><span class="unit">lb</span>
+        </div>
+        <div class="ticket" id="ticket" aria-hidden="true">
+          <h3>Buy ticket B-4041</h3>
+          <div class="sub">Dealer, D1 pricing</div>
+          <table>
+            <tr><td>Commodity</td><td>Light iron</td></tr>
+            <tr><td>Gross</td><td>42,380 lb</td></tr>
+            <tr><td>Tare</td><td>28,960 lb</td></tr>
+            <tr><td>Net</td><td>13,420 lb</td></tr>
+            <tr><td>Price</td><td>$0.0825 / lb</td></tr>
+            <tr class="total"><td>Total</td><td>$1,107.15</td></tr>
+          </table>
+          <div class="foot"><span>Seller ID <span class="ok">on file</span></span><span>Sent to cashier</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <section class="band" id="how">
+    <div class="wrap">
+      <h2>Follow a load through Yard-Built</h2>
+      <p class="intro">Every screen matches a step your crew already takes. A ticket written at the scale carries through to the check, the inventory count, the outbound load and the paperwork.</p>
+      <ol class="path">
+        <li><h3>Weigh in</h3><p>Gross and tare at the scale. Each dealer's price tier is applied automatically, and the seller's ID is checked on the spot.</p></li>
+        <li><h3>Pay</h3><p>Held tickets wait at the cashier. Checks are numbered per yard, ACH is supported, and the Positive Pay file goes straight to your bank.</p></li>
+        <li><h3>Count</h3><p>Inventory by yard and commodity updates the moment a ticket closes. No end-of-day re-keying.</p></li>
+        <li><h3>Ship</h3><p>Contracts, purchase orders, outbound loads, trailers and freight costs, with gross profit on every shipment.</p></li>
+        <li><h3>File</h3><p>BOLs, signed disclosures and price agreements attach to the ticket or dealer they belong to.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <h2>Built for the scale house and the office</h2>
+      <p class="intro">Built for the way a multi-yard scrap company actually works.</p>
+      <div class="features">
+        <div class="feature">
+          <h3>Seller ID that's actually protected</h3>
+          <p>Driver's license number and date of birth are encrypted. License photo and thumbprint are stored with the dealer, USB fingerprint readers are supported, and every time someone looks at an ID it's logged.</p>
+        </div>
+        <div class="feature">
+          <h3>Dealer pricing tiers</h3>
+          <p>Scale, D2, D1 and D-High price levels from your daily price sheet, with yard-by-yard adjustments. The scale operator never picks a price by hand.</p>
+        </div>
+        <div class="feature">
+          <h3>Checks your bank can verify</h3>
+          <p>Sequential check numbers per account, a check register with cleared and outstanding balances, and a Positive Pay file in the format your bank already takes.</p>
+        </div>
+        <div class="feature">
+          <h3>Every yard, one system</h3>
+          <p>Switch yards from the top bar, or roll everything up to a company-wide view. Users can be limited to the yards they work at.</p>
+        </div>
+        <div class="feature">
+          <h3>Ask it a question</h3>
+          <p>A built-in assistant answers in plain English from your own tickets, prices and payables.</p>
+          <q>What did we pay out on copper at Hays this week?</q>
+        </div>
+        <div class="feature">
+          <h3>Works at the scale and in the yard</h3>
+          <p>Runs in a browser on the scale-house PC, a tablet at the window, or a phone out by the piles. Nothing to install.</p>
+        </div>
+        <div class="feature">
+          <h3>Paperwork with expiry dates</h3>
+          <p>Insurance, permits and price agreements are stored with the record they belong to, and the Documents tab warns you 60 days before they lapse.</p>
+        </div>
+        <div class="feature">
+          <h3>Reports that catch problems</h3>
+          <p>Purchases by commodity and dealer, payables and receivables aging, contract status, and an exceptions report for duplicate dealers and suspicious tickets.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band story" id="about">
+    <div class="wrap">
+      <div>
+        <h2>Made by a scrap company, not a software company</h2>
+        <p class="intro" style="margin-bottom:0;">Yard-Built is developed by Langer Industrial, a family-owned scrap metal company headquartered in Scottsbluff, Nebraska. It's shaped by the daily work of our own yards: the tickets, the dealers, the check runs and the loads going out the gate.</p>
+      </div>
+      <ul class="yards" aria-label="Langer Industrial yards">
+        <li>Scottsbluff <span>Nebraska, headquarters</span></li>
+        <li>Hays <span>Kansas</span></li>
+        <li>Colby <span>Kansas</span></li>
+        <li>Rapid City <span>South Dakota</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="demo" id="demo">
+    <div class="wrap">
+      <div>
+        <h2>See it run on your yard's numbers</h2>
+        <p class="intro">Tell us a little about your operation and we'll set up a time to walk through Yard-Built with you.</p>
+        <p class="contact-alt">Already using Yard-Built? <a href="https://app.yardbuilt.net/">Log in here</a>.</p>
+      </div>
+      <form class="req" id="demo-form" novalidate>
+        <div><label for="f-name">Your name</label><input id="f-name" name="name" autocomplete="name" required maxlength="120"></div>
+        <div><label for="f-company">Company</label><input id="f-company" name="company" autocomplete="organization" required maxlength="160"></div>
+        <div><label for="f-email">Email</label><input id="f-email" name="email" type="email" autocomplete="email" required maxlength="200"></div>
+        <div><label for="f-phone">Phone <span class="opt">(optional)</span></label><input id="f-phone" name="phone" type="tel" autocomplete="tel" maxlength="40"></div>
+        <div><label for="f-yards">How many yards?</label>
+          <select id="f-yards" name="yards"><option value="1">1</option><option value="2-3">2–3</option><option value="4-10">4–10</option><option value="10+">More than 10</option></select></div>
+        <div><label for="f-current">Current software <span class="opt">(optional)</span></label><input id="f-current" name="currentSoftware" maxlength="120" placeholder="e.g. paper tickets, spreadsheets"></div>
+        <div class="full"><label for="f-msg">Anything we should know? <span class="opt">(optional)</span></label><textarea id="f-msg" name="message" maxlength="2000"></textarea></div>
+        <div class="hp" aria-hidden="true"><label for="f-web">Website</label><input id="f-web" name="website" tabindex="-1" autocomplete="off"></div>
+        <div class="full"><button class="btn primary" type="submit" id="f-submit">Request a demo</button></div>
+        <p class="form-msg" id="f-msg-out" role="status" aria-live="polite"></p>
+      </form>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/icon.png" alt="">Yard-Built</a>
+    <span>© 2026 Langer Industrial. Yard-Built is in beta.</span>
+    <span class="grow"><a href="#demo">Request a demo</a><a href="https://app.yardbuilt.net/">Log in</a></span>
+  </div>
+</footer>
+
+<script>
+  // The one moment of motion: the scale settles on a weight, the lamp goes stable, the ticket prints.
+  (function () {
+    const target = 42380, el = document.getElementById("weight"), lamp = document.getElementById("lamp"), lampText = document.getElementById("lamp-text"), ticket = document.getElementById("ticket");
+    const fmt = n => Math.round(n).toLocaleString("en-US");
+    const done = () => { el.textContent = fmt(target); lamp.classList.add("on"); lampText.textContent = "Stable"; ticket.classList.add("out"); };
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { done(); return; }
+    const start = performance.now(), dur = 1700;
+    function frame(t) {
+      const p = Math.min(1, (t - start) / dur);
+      // ease out, with a little overshoot-and-settle like a real scale head
+      const e = 1 - Math.pow(1 - p, 3);
+      const wobble = p < 1 ? Math.sin(p * 18) * (1 - p) * 260 : 0;
+      el.textContent = fmt(Math.max(0, target * e + wobble));
+      if (p < 1) requestAnimationFrame(frame); else setTimeout(done, 350);
+    }
+    setTimeout(() => requestAnimationFrame(frame), 300);
+  })();
+
+  // Demo request form
+  (function () {
+    const form = document.getElementById("demo-form"), out = document.getElementById("f-msg-out"), btn = document.getElementById("f-submit");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      out.className = "form-msg"; out.textContent = "";
+      const data = Object.fromEntries(new FormData(form).entries());
+      const missing = [["name", "your name"], ["company", "your company"], ["email", "your email"]].filter(([k]) => !String(data[k] || "").trim()).map(([, l]) => l);
+      if (missing.length) { out.className = "form-msg err"; out.textContent = "Add " + missing.join(", ") + " so we can reach you."; return; }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email.trim())) { out.className = "form-msg err"; out.textContent = "That email address doesn't look complete."; return; }
+      btn.disabled = true; btn.textContent = "Sending…";
+      try {
+        const res = await fetch("/public/demo-requests", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || "The request didn't go through. Try again in a minute.");
+        form.reset(); out.className = "form-msg good"; out.textContent = "Request received. We'll reach out to set up a time.";
+        btn.textContent = "Request sent";
+      } catch (err) {
+        out.className = "form-msg err"; out.textContent = err.message; btn.disabled = false; btn.textContent = "Request a demo";
+      }
+    });
+  })();
+</script>
+</body>
+</html>
