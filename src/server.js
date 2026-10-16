@@ -32,7 +32,8 @@ app.use("/freight", require("./routes/freight"));
 app.use("/lanes", require("./routes/lanes"));
 app.use("/trailers", require("./routes/trailers"));
 app.use("/settings", require("./routes/settings"));
-app.use("/assistant", require("./routes/assistant")); // Claude-powered in-app assistant (needs ANTHROPIC_API_KEY)
+app.use("/assistant", require("./routes/assistant"));
+app.use("/imports", require("./routes/imports"));   // bulk vendor/customer import from ScrapDragon exports // Claude-powered in-app assistant (needs ANTHROPIC_API_KEY)
 
 // Centralized error handler — every route above is async and lets exceptions bubble up to this,
 // rather than each one needing its own try/catch boilerplate for unexpected DB errors.
