@@ -94,8 +94,12 @@ individual grant) includes it; everything else is open to any logged-in user.
   builds the bank's issue file for everything pending, records what was reported (each check is
   reported as an issue once and, if voided afterwards, as a void once) and returns the file;
   `GET /positive-pay/batches?account=`, `GET /positive-pay/batches/:id/file` re-downloads the exact
-  file; `GET /positive-pay/preview?account=` shows the file without recording anything. The layout
-  (CSV or fixed-width, column order, date/amount formats, issue/void codes) lives per account in
+  file; `GET /positive-pay/preview?account=` shows the file without recording anything. `account=ALL`
+  builds one file across every yard's account (the ScrapDragon check-register style). The default
+  layout is that register — an Excel sheet `CheckRegister` with status / Check # / Paid Date /
+  Pay To The Order Of / Amount — written with a dependency-free .xlsx writer in
+  `src/positivePayFormat.js`. The layout (xlsx, CSV or fixed-width, column order, date/amount
+  formats, issue/void codes) lives per account in
   `bank_accounts.positive_pay_config`, edited from Settings → Bank Accounts. Full account numbers
   are encrypted with `ID_ENCRYPTION_KEY`; `PATCH /bank-accounts/:yard` (`editBankAccounts`) also
   takes `bankName, routingNumber, accountNumber, positivePayEnabled, positivePayConfig`.
