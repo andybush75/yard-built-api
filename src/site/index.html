@@ -3,15 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Yard-Built — Run every scrap yard from one system</title>
-<meta name="description" content="Scrap yard software for companies with more than one yard: tickets, dealer pricing, seller ID, checks and Positive Pay, inventory, shipping and documents for every location in one system.">
+<title>Yard-Built — Ask your scrap yards anything</title>
+<meta name="description" content="Scrap yard software with an AI assistant built in. Ask in plain English and get answers from your live tickets, inventory, prices, payables and contracts, across every yard you run.">
 <meta name="theme-color" content="#1b2433">
 <link rel="icon" href="/icon.png">
 <link rel="apple-touch-icon" href="/icon.png">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Yard-Built">
-<meta property="og:title" content="Yard-Built — Run every scrap yard from one system">
-<meta property="og:description" content="Tickets, dealer pricing, seller ID, checks and Positive Pay, inventory, shipping and documents for every yard you run, in one system.">
+<meta property="og:title" content="Yard-Built — Ask your scrap yards anything">
+<meta property="og:description" content="Ask in plain English and get answers from your live tickets, inventory, prices, payables and contracts, across every yard you run.">
 <meta property="og:url" content="https://www.yardbuilt.net/">
 <meta property="og:image" content="https://www.yardbuilt.net/og-image.png">
 <meta property="og:image:width" content="1200">
@@ -137,7 +137,47 @@
   footer .brand { font-size: 16px; color: var(--ink); }
   footer .grow { margin-left: auto; display: flex; gap: 20px; }
 
+  /* Hero chat: the assistant answering a question about the yards */
+  .chat { background: var(--ink); border-radius: 18px; padding: 18px; box-shadow: 0 1px 0 #0003, 0 24px 48px -24px #1b243399; color: #dbe2ec; font-size: 16px; }
+  .chat-head { display: flex; align-items: center; gap: 10px; padding: 2px 4px 14px; border-bottom: 1px solid #2a3446; margin-bottom: 14px; color: #8f9bb0; font-size: 14px; }
+  .chat-head img { width: 22px; height: 22px; background: #fff; border-radius: 5px; padding: 2px; }
+  .chat-head b { color: #fff; font-weight: 700; }
+  .chat-head .yard { margin-left: auto; border: 1px solid #3a4558; border-radius: 999px; padding: 3px 10px; }
+  .msg { max-width: 92%; padding: 11px 14px; border-radius: 14px; line-height: 1.45; margin-bottom: 10px; }
+  .msg.q { margin-left: auto; background: var(--blue); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.a { background: #263042; border-bottom-left-radius: 4px; min-height: 1.45em; }
+  .msg.a .row { display: flex; justify-content: space-between; gap: 16px; padding: 3px 0; border-bottom: 1px dashed #3a4558; font-variant-numeric: tabular-nums; }
+  .msg.a .row:last-of-type { border-bottom: 0; }
+  .msg.a .hl { color: var(--hivis); font-weight: 700; }
+  .msg.a p { margin: 0 0 8px; }
+  .msg.a p:last-child { margin-bottom: 0; }
+  .looked { font-size: 13px; color: #8f9bb0; margin: 0 0 10px 2px; min-height: 1.2em; }
+  .chip { display: inline-block; margin-top: 10px; padding: 6px 12px; border-radius: 8px; background: #fff; color: var(--ink); font-weight: 700; font-size: 14px; text-decoration: none; }
+  .ask-bar { display: flex; gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid #2a3446; }
+  .ask-bar span { flex: 1; background: #0d121b; border: 1px solid #2a3446; border-radius: 10px; padding: 10px 12px; color: #6b7891; font-size: 15px; }
+  .ask-bar i { width: 40px; border-radius: 10px; background: var(--indigo); display: grid; place-items: center; font-style: normal; color: #fff; font-weight: 800; }
+  .reveal { opacity: 0; transform: translateY(6px); transition: opacity .35s, transform .35s; }
+  .reveal.in { opacity: 1; transform: none; }
+  .example-note { font-size: 13px; color: var(--ink-2); margin: 10px 4px 0; }
+
+  /* Questions it answers, grouped by who asks them */
+  .asks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 28px; margin-bottom: 48px; }
+  .asks h3 { margin: 0 0 12px; font-size: 19px; font-variation-settings: "wdth" 112; padding-bottom: 10px; border-bottom: 3px solid var(--blue); }
+  .asks div:nth-child(n+3) h3 { border-color: var(--indigo); }
+  .asks ul { list-style: none; margin: 0; padding: 0; }
+  .asks li { padding: 10px 12px; margin-bottom: 8px; background: var(--steel); border-radius: 10px; font-size: 16px; line-height: 1.4; }
+  .trust { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; padding-top: 28px; border-top: 1px solid var(--rule); }
+  .trust h3 { margin: 0 0 6px; font-size: 18px; }
+  .trust p { margin: 0; color: var(--ink-2); font-size: 16px; }
+
+  /* Static scale ticket used to illustrate "follow a load" */
+  .how-top { display: grid; grid-template-columns: 1.1fr .9fr; gap: 56px; align-items: center; margin-bottom: 56px; }
+  .how-top .intro { margin-bottom: 0; }
+
   @media (max-width: 980px) {
+    .asks { grid-template-columns: 1fr 1fr; }
+    .trust { grid-template-columns: 1fr; gap: 20px; }
+    .how-top { grid-template-columns: 1fr; gap: 32px; }
     .hero .wrap, .story .wrap, .demo .wrap { grid-template-columns: 1fr; gap: 40px; }
     ol.path { grid-template-columns: 1fr; gap: 28px; }
     ol.path::before { left: 21px; right: auto; top: 22px; bottom: 22px; width: 4px; height: auto; background: linear-gradient(180deg, var(--blue), var(--indigo)); }
@@ -155,10 +195,11 @@
     .hero { padding: 40px 0 56px; }
     section { padding: 60px 0; }
     form.req { grid-template-columns: 1fr; padding: 20px; }
+    .asks { grid-template-columns: 1fr; }
   }
   @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
-    .ticket { transition: none; }
+    .ticket, .reveal { transition: none; }
   }
 </style>
 </head>
@@ -168,6 +209,7 @@
   <div class="wrap">
     <a class="brand" href="/"><img src="/icon.png" alt="">Yard-Built</a>
     <nav class="links" aria-label="Sections">
+      <a href="#assistant">Assistant</a>
       <a href="#how">How it works</a>
       <a href="#features">Features</a>
       <a href="#about">About</a>
@@ -183,20 +225,77 @@
   <div class="hero">
     <div class="wrap">
       <div>
-        <h1>Run every yard from one system.</h1>
-        <p class="lede">Yard-Built is scrap yard software for companies with more than one location. Every scale, cashier window and back office works from the same tickets, prices, checks and inventory, and you see all of it from one screen.</p>
+        <h1>Ask your yards anything.</h1>
+        <p class="lede">Yard-Built is scrap yard software with an AI assistant built in. Ask in plain English and it answers from your live tickets, inventory, prices and payables, across every yard you run.</p>
         <div class="cta">
           <a class="btn primary" href="#demo">Request a demo</a>
           <a class="btn line" href="https://app.yardbuilt.net/">Log in</a>
         </div>
       </div>
 
-      <div class="scale" aria-label="Example: a load weighed in and its ticket">
-        <div class="scale-top"><span>Inbound scale, North yard</span><span class="lamp" id="lamp"><i></i><span id="lamp-text">Settling</span></span></div>
-        <div class="readout" role="img" aria-label="Gross weight 42,380 pounds">
-          <span class="mode">Gross</span><span class="num" id="weight">0</span><span class="unit">lb</span>
+      <div>
+        <div class="chat" aria-label="Example conversation with the Yard-Built assistant">
+          <div class="chat-head"><img src="/icon.png" alt=""><b>Yard-Built assistant</b><span class="yard">All yards</span></div>
+          <div class="msg q" id="c-q">What did we buy at the north yard this week, and what's still unpaid?</div>
+          <div class="looked reveal" id="c-looked">Looked up purchase volumes and payables for North yard</div>
+          <div class="msg a reveal" id="c-a">
+            <p>North yard bought <span class="hl">412,860 lb</span> on 138 tickets this week, <span class="hl">$96,420</span> paid out so far.</p>
+            <div class="row"><span>Light iron</span><span>248,300 lb</span></div>
+            <div class="row"><span>#1 HMS</span><span>96,140 lb</span></div>
+            <div class="row"><span>Insulated copper wire</span><span>3,860 lb</span></div>
+            <p style="margin-top:10px;">11 tickets are still unpaid, <span class="hl">$8,214.55</span> in total. The oldest is B-4019 from Monday.</p>
+            <span class="chip">Open payables</span>
+          </div>
+          <div class="ask-bar" aria-hidden="true"><span>Ask about tickets, prices, inventory…</span><i>↑</i></div>
         </div>
-        <div class="ticket" id="ticket" aria-hidden="true">
+        <p class="example-note">Example conversation with sample numbers.</p>
+      </div>
+    </div>
+  </div>
+
+  <section class="band" id="assistant">
+    <div class="wrap">
+      <h2>An assistant that knows your yards</h2>
+      <p class="intro">Everyone from the owner to the scale house can ask a question instead of hunting through reports. It reads the same live data your screens do, so the answer is current to the last ticket.</p>
+      <div class="asks">
+        <div><h3>Owners</h3><ul>
+          <li>How much copper do we have on hand across all yards?</li>
+          <li>Compare this month's purchases to last month by yard.</li>
+        </ul></div>
+        <div><h3>Yard managers</h3><ul>
+          <li>Which tickets are still on hold?</li>
+          <li>What's our D1 price on light iron today?</li>
+        </ul></div>
+        <div><h3>The office</h3><ul>
+          <li>Who do we owe money to, and how old is it?</li>
+          <li>Find every ticket for this dealer since August.</li>
+        </ul></div>
+        <div><h3>Sales</h3><ul>
+          <li>Which contracts are behind, and do we have the inventory to fill them?</li>
+          <li>How many tons of HMS can we ship this week?</li>
+        </ul></div>
+      </div>
+      <div class="trust">
+        <div><h3>It looks, it doesn't touch</h3><p>The assistant reads your data to answer. It never writes a ticket, changes a price or moves money.</p></div>
+        <div><h3>It takes you to the screen</h3><p>When an answer points to a ticket, report or payables list, it offers a button that opens it.</p></div>
+        <div><h3>It works from your phone</h3><p>Ask from the scale house, the office, or the truck. Same answers everywhere.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="wrap">
+      <div class="how-top">
+        <div>
+          <h2>Follow a load through Yard-Built</h2>
+          <p class="intro">Every screen matches a step your crew already takes. A ticket written at the scale carries through to the check, the inventory count, the outbound load and the paperwork.</p>
+        </div>
+      <div class="scale" aria-label="Example: a load weighed in and its ticket">
+        <div class="scale-top"><span>Inbound scale, North yard</span><span class="lamp on" id="lamp"><i></i><span id="lamp-text">Stable</span></span></div>
+        <div class="readout" role="img" aria-label="Gross weight 42,380 pounds">
+          <span class="mode">Gross</span><span class="num" id="weight">42,380</span><span class="unit">lb</span>
+        </div>
+        <div class="ticket out" id="ticket" aria-hidden="true">
           <h3>Buy ticket B-4041</h3>
           <div class="sub">Dealer, D1 pricing</div>
           <table>
@@ -210,13 +309,7 @@
           <div class="foot"><span>Seller ID <span class="ok">on file</span></span><span>Sent to cashier</span></div>
         </div>
       </div>
-    </div>
-  </div>
-
-  <section class="band" id="how">
-    <div class="wrap">
-      <h2>Follow a load through Yard-Built</h2>
-      <p class="intro">Every screen matches a step your crew already takes. A ticket written at the scale carries through to the check, the inventory count, the outbound load and the paperwork.</p>
+      </div>
       <ol class="path">
         <li><h3>Weigh in</h3><p>Gross and tare at the scale. Each dealer's price tier is applied automatically, and the seller's ID is checked on the spot.</p></li>
         <li><h3>Pay</h3><p>Held tickets wait at the cashier. Checks are numbered per yard, ACH is supported, and the Positive Pay file goes straight to your bank.</p></li>
@@ -227,7 +320,7 @@
     </div>
   </section>
 
-  <section id="features">
+  <section class="band" id="features">
     <div class="wrap">
       <h2>Built for the scale house and the office</h2>
       <p class="intro">Built for the way a multi-yard scrap company actually works.</p>
@@ -249,9 +342,8 @@
           <p>Carriers, lanes and trailers in one place, with the freight cost on every outbound load so gross profit is real, not estimated.</p>
         </div>
         <div class="feature">
-          <h3>Ask it a question</h3>
-          <p>A built-in assistant answers in plain English from your own tickets, prices and payables.</p>
-          <q>What did we pay out on copper at the north yard this week?</q>
+          <h3>Seller ID and thumbprints</h3>
+          <p>Capture the license photo with a tablet camera and the thumbprint with a USB fingerprint reader, right at the window.</p>
         </div>
         <div class="feature">
           <h3>Works at the scale and in the yard</h3>
@@ -269,7 +361,7 @@
     </div>
   </section>
 
-  <section class="band story" id="about">
+  <section class="story" id="about">
     <div class="wrap">
       <div>
         <h2>Built for companies with more than one yard</h2>
@@ -318,22 +410,12 @@
 </footer>
 
 <script>
-  // The one moment of motion: the scale settles on a weight, the lamp goes stable, the ticket prints.
+  // The one moment of motion: the question is asked, the assistant looks it up, the answer arrives.
   (function () {
-    const target = 42380, el = document.getElementById("weight"), lamp = document.getElementById("lamp"), lampText = document.getElementById("lamp-text"), ticket = document.getElementById("ticket");
-    const fmt = n => Math.round(n).toLocaleString("en-US");
-    const done = () => { el.textContent = fmt(target); lamp.classList.add("on"); lampText.textContent = "Stable"; ticket.classList.add("out"); };
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { done(); return; }
-    const start = performance.now(), dur = 1700;
-    function frame(t) {
-      const p = Math.min(1, (t - start) / dur);
-      // ease out, with a little overshoot-and-settle like a real scale head
-      const e = 1 - Math.pow(1 - p, 3);
-      const wobble = p < 1 ? Math.sin(p * 18) * (1 - p) * 260 : 0;
-      el.textContent = fmt(Math.max(0, target * e + wobble));
-      if (p < 1) requestAnimationFrame(frame); else setTimeout(done, 350);
-    }
-    setTimeout(() => requestAnimationFrame(frame), 300);
+    const looked = document.getElementById("c-looked"), ans = document.getElementById("c-a");
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { looked.classList.add("in"); ans.classList.add("in"); return; }
+    setTimeout(() => looked.classList.add("in"), 700);
+    setTimeout(() => ans.classList.add("in"), 1600);
   })();
 
   // Demo request form
