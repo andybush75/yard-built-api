@@ -36,6 +36,22 @@ npm test               # end-to-end smoke test against the running server
 Default seeded login: `andy.bush@langerindustrial.com` / `changeme123` — **change this password
 before any real deploy**; it's a seed placeholder, not a real credential.
 
+## Sandbox / demo server
+
+A second deployment of this same repo, running with `SANDBOX=1`, is the demo environment
+(sandbox.yardbuilt.net). It holds a fictional company ("High Plains Metal Recycling") instead of
+real data, shows an orange SANDBOX strip in the UI, and admins can wipe and reload it from the
+"Reset demo data" button (or `POST /sandbox/reset`).
+
+- Start command: `npm run sandbox:start` (= migrate, then load the demo dataset if it isn't there
+  yet, then start). The seed is idempotent, so redeploys don't duplicate anything.
+- Login: `demo@yardbuilt.net` / `demo1234` (also shown on the sandbox login screen). Other seeded
+  accounts: manager@, cashier@, scale@yardbuilt.net — same password.
+- `npm run seed:demo -- --reset` wipes every table and reloads. It refuses unless `SANDBOX=1`, so
+  it can't be pointed at production by mistake; `/sandbox/*` likewise 404s on production.
+- Variables: `DATABASE_URL` (its own Postgres — never production's), `JWT_SECRET` (a different
+  value from production), `SANDBOX=1`, and optionally `ANTHROPIC_API_KEY` / `ID_ENCRYPTION_KEY`.
+
 ## Deploying to Railway
 
 This hasn't been deployed yet — that needs your own Railway account, so here's exactly what to

@@ -10,6 +10,8 @@
     "migrate": "node db/migrate.js",
     "migrate:new": "node db/new-migration.js",
     "seed": "node db/seed.js",
+    "seed:demo": "node db/seed-demo.js",
+    "sandbox:start": "npm run migrate && npm run seed:demo && npm start",
     "test": "node test/migrate-runner-test.js && node test/smoke-test.js",
     "test:unit": "node test/migrate-runner-test.js"
   },

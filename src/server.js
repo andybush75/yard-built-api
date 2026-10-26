@@ -10,7 +10,10 @@ app.use(cors());
 app.use("/documents", express.json({ limit: "15mb" }));
 app.use(express.json({ limit: "5mb" })); // bulk imports (vendor/customer lists) can exceed the 100kb default
 
-app.get("/health", (req, res) => res.json({ ok: true, service: "yard-built-api", time: new Date().toISOString() }));
+// SANDBOX=1 marks a demo deployment (sandbox.yardbuilt.net): fictional data, resettable, shown
+// with a banner in the UI. Never set it on the production service.
+const SANDBOX = process.env.SANDBOX === "1";
+app.get("/health", (req, res) => res.json({ ok: true, service: "yard-built-api", sandbox: SANDBOX, time: new Date().toISOString() }));
 
 // The public marketing site (src/site) answers on yardbuilt.net / www.yardbuilt.net; everything
 // else (app.yardbuilt.net, the Railway URL, localhost) gets the app. /login on the marketing host
@@ -52,6 +55,7 @@ app.use("/settings", require("./routes/settings"));
 app.use("/assistant", require("./routes/assistant"));
 app.use("/imports", require("./routes/imports"));
 app.use("/demo-requests", require("./routes/demoRequests").adminRouter);   // bulk vendor/customer import from ScrapDragon exports // Claude-powered in-app assistant (needs ANTHROPIC_API_KEY)
+app.use("/sandbox", require("./routes/sandbox"));                           // 404s unless SANDBOX=1
 
 // Centralized error handler — every route above is async and lets exceptions bubble up to this,
 // rather than each one needing its own try/catch boilerplate for unexpected DB errors.
