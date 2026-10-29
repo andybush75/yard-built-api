@@ -56,6 +56,7 @@ app.use("/assistant", require("./routes/assistant"));
 app.use("/imports", require("./routes/imports"));
 app.use("/demo-requests", require("./routes/demoRequests").adminRouter);   // bulk vendor/customer import from ScrapDragon exports // Claude-powered in-app assistant (needs ANTHROPIC_API_KEY)
 app.use("/sandbox", require("./routes/sandbox"));                           // 404s unless SANDBOX=1
+app.use("/jobs", require("./routes/jobs"));                                 // background jobs: schedules, run log, run now / retry
 
 // Centralized error handler — every route above is async and lets exceptions bubble up to this,
 // rather than each one needing its own try/catch boilerplate for unexpected DB errors.
@@ -66,3 +67,11 @@ app.use((err, req, res, next) => {
 
 const port = process.env.PORT || 4000;
 app.listen(port, () => console.log(`yard-built-api listening on :${port}`));
+
+// Background jobs (src/jobs): the queue + cron schedules live in Postgres via pg-boss, so they start
+// with the web process — no separate worker service. JOBS=0 keeps them off (e.g. a second replica).
+if (process.env.JOBS !== "0") {
+  const { startJobs, stopJobs } = require("./jobs");
+  startJobs().catch((err) => console.error("jobs failed to start", err));
+  for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => stopJobs().finally(() => process.exit(0)));
+}

@@ -167,6 +167,25 @@ Setup: create a key at platform.claude.com and set `ANTHROPIC_API_KEY` in Railwa
 (optionally `ASSISTANT_MODEL`). Without the key the route answers 503 and the UI hides the bubble.
 `GET /assistant/status` reports whether it's configured.
 
+## Background jobs (Settings → Jobs)
+
+The server runs its own scheduled jobs — the same idea as the Hangfire dashboard in ScrapDragon:
+every job has a schedule you can switch on or off, every run is logged with its result or error,
+and a failed run can be retried from the Jobs tab once the cause is fixed. The queue and the cron
+schedules live in Postgres ([pg-boss](https://github.com/timgit/pg-boss), its own `pgboss` schema),
+so there is no Redis and no separate worker service; Yard-Built's own run log is `job_runs`.
+
+Registered jobs (`src/jobs/index.js`):
+
+| Job | Schedule | What it does |
+| --- | --- | --- |
+| `price-sheet-send` | Weekdays 6:00 AM Mountain (off until an admin switches it on) | Texts each on-list dealer their tier's prices for their yard (Twilio SMS; logged as a dry run with the exact message until `TWILIO_*` is set). Also queued by "Send now" on Vendor Price Sheets and by price updates for "On price update" dealers. |
+| `quickbooks-sync` | Nightly 11:00 PM Mountain (off) | Skeleton: counts the closed tickets/remittances waiting to post and reports it. Posts nothing until the posting code is written and `QBO_*` is set. |
+
+API: `GET /jobs`, `GET /jobs/runs?name=`, `POST /jobs/:name/run`, `POST /jobs/runs/:id/retry`,
+`PATCH /jobs/:name { enabled }`, `GET /jobs/price-sheet-sends`. Running, retrying and switching
+schedules need `manageUsers`. Adding a job is one handler module in `src/jobs/` plus a registry entry.
+
 ## Changing the database
 
 The schema lives in `migrations/`, one numbered SQL file per change. `npm run migrate` applies
