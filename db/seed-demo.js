@@ -36,11 +36,12 @@ const BANK_ACCOUNTS = [
 ];
 
 const ROLES = [
-  { name: "Admin", system: true, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","adjustInventory","regradeInventory","packInventory","addCommodity","payRemittances","editBankAccounts","viewIds","manageDocuments"] },
-  { name: "Yard Manager", system: false, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","regradeInventory","packInventory","payRemittances","viewIds","manageDocuments"] },
+  { name: "Admin", system: true, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","adjustInventory","regradeInventory","packInventory","addCommodity","payRemittances","editBankAccounts","viewIds","manageDocuments","manageBoxes"] },
+  { name: "Yard Manager", system: false, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","regradeInventory","packInventory","payRemittances","viewIds","manageDocuments","manageBoxes"] },
   { name: "Cashier", system: false, permissions: ["voidTickets","payRemittances"] },
   { name: "Scale Operator", system: false, permissions: ["packInventory"] },
   { name: "Mechanic", system: false, permissions: [] },
+  { name: "Driver", system: false, permissions: [] },
 ];
 
 // Fixed ids so a signed-in admin's token survives a reset (tokens carry the user id).

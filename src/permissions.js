@@ -14,6 +14,7 @@ const PERMISSION_KEYS = [
   "editBankAccounts",
   "viewIds",
   "manageDocuments",
+  "manageBoxes",
 ];
 
 function unknownKeys(list) {

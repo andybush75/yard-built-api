@@ -20,11 +20,12 @@ const BANK_ACCOUNTS = [
 ];
 
 const ROLES = [
-  { name: "Admin", system: true, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","adjustInventory","regradeInventory","packInventory","addCommodity","payRemittances","editBankAccounts"] },
-  { name: "Yard Manager", system: false, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","regradeInventory","packInventory","payRemittances"] },
+  { name: "Admin", system: true, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","adjustInventory","regradeInventory","packInventory","addCommodity","payRemittances","editBankAccounts","manageBoxes"] },
+  { name: "Yard Manager", system: false, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","regradeInventory","packInventory","payRemittances","manageBoxes"] },
   { name: "Cashier", system: false, permissions: ["voidTickets","payRemittances"] },
   { name: "Scale Operator", system: false, permissions: ["packInventory"] },
   { name: "Mechanic", system: false, permissions: [] },
+  { name: "Driver", system: false, permissions: [] },
 ];
 
 const COMMODITIES = [

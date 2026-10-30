@@ -31,6 +31,8 @@ app.use("/public", require("./routes/demoRequests").publicRouter);
 // Serve the prototype UI (src/public/index.html) at the site root, so the app itself
 // lives at the same URL as the API instead of needing a separate host.
 app.use(express.static(path.join(__dirname, "public")));
+// Driver phone page for box drops / pick-ups / swaps (no app install needed — Add to Home Screen).
+app.get(["/driver", "/driver/"], (req, res) => res.sendFile(path.join(__dirname, "public", "driver.html")));
 
 app.use("/auth", require("./routes/auth"));
 app.use("/users", require("./routes/users"));
@@ -51,6 +53,7 @@ app.use("/search", require("./routes/search"));
 app.use("/freight", require("./routes/freight"));
 app.use("/lanes", require("./routes/lanes"));
 app.use("/trailers", require("./routes/trailers"));
+app.use("/boxes", require("./routes/boxes"));                               // Box Dispatch: box list + driver drop/pick-up/swap log
 app.use("/settings", require("./routes/settings"));
 app.use("/assistant", require("./routes/assistant"));
 app.use("/imports", require("./routes/imports"));
