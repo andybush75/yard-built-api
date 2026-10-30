@@ -228,7 +228,7 @@ async function runTool(name, input, ctx) {
     case "get_payables": {
       let w1 = "WHERE type = 'buy' AND status = 'Closed' AND paid = false AND COALESCE(kind,'') <> 'transfer'" + yardClause(params, input.yard);
       const tix = await query(
-        `SELECT party_name AS payee, COUNT(*) AS tickets, SUM(total) AS total, MIN(date) AS oldest, MAX(date) AS newest, yard
+        `SELECT party_name AS payee, COUNT(*) AS tickets, SUM(total - COALESCE(deductions,0)) AS total, MIN(date) AS oldest, MAX(date) AS newest, yard
          FROM tickets ${w1} GROUP BY party_name, yard ORDER BY total DESC LIMIT 100`,
         params
       );

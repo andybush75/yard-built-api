@@ -20,7 +20,7 @@ router.post("/", requireAuth, async (req, res) => {
   if (!name) return res.status(400).json({ error: "name is required" });
   const { rows } = await query(
     `INSERT INTO customers (name, phone, email, tier, freight_per_lb, notes, on_price_list, auto_send, terms, address, business_exempt)
-     VALUES ($1,$2,$3,COALESCE($4,'scale'),COALESCE($5,0),$6,COALESCE($7,false),COALESCE($8,'off'),COALESCE($9,'cod'),$10,COALESCE($11,false))
+     VALUES ($1,$2,$3,COALESCE($4::price_tier,'scale'),COALESCE($5,0),$6,COALESCE($7,false),COALESCE($8,'off'),COALESCE($9,'cod'),$10,COALESCE($11,false))
      RETURNING *`,
     [name, phone, email, tier, freightPerLb, notes, onPriceList, autoSend, terms, address, businessExempt]
   );

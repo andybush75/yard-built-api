@@ -3,6 +3,7 @@ const { pool, query } = require("../db");
 const { requireAuth, requirePermission } = require("../middleware/auth");
 const { logAudit } = require("../audit");
 const { createRemittance } = require("../remittanceService");
+const boxChargeSvc = require("../boxCharges");
 
 const router = express.Router();
 
@@ -78,7 +79,11 @@ router.get("/:id", requireAuth, async (req, res) => {
      ORDER BY a.created_at`,
     [req.params.id]
   );
-  res.json({ ...ticket, remittance, freight: freight[0] || null, timeline });
+  const { rows: boxCharges } = await query(
+    "SELECT id, kind, box_number, days_on_site, free_days, miles, miles_source, truck, amount, calc_amount FROM box_charges WHERE ticket_id = $1 AND status = 'applied' ORDER BY kind",
+    [req.params.id]
+  );
+  res.json({ ...ticket, remittance, freight: freight[0] || null, timeline, box_charges: boxCharges });
 });
 
 function nowTimeLabel() {
@@ -95,7 +100,7 @@ function nowTimeLabel() {
 router.post("/", requireAuth, async (req, res) => {
   const {
     id, type, date, yard, vendorId, customerId, partyName, holdDesc,
-    commodity, tier, netWeight, price, payment, contractId, poId, shipmentId, trailerId,
+    commodity, tier, netWeight, price, payment, contractId, poId, shipmentId, trailerId, boxCharges,
   } = req.body || {};
 
   if (!type || !["buy", "sell"].includes(type)) return res.status(400).json({ error: "type must be 'buy' or 'sell'" });
@@ -208,6 +213,14 @@ router.post("/", requireAuth, async (req, res) => {
       ]
     );
 
+    // Box rent / mileage the scale operator applied (or waived) on this ticket — see src/boxCharges.js.
+    if (Array.isArray(boxCharges) && boxCharges.length) {
+      const deducted = await boxChargeSvc.applyToTicket(client, ticketRows[0], boxCharges, req.user.id);
+      if (deducted) ticketRows[0].deductions = deducted;
+      await logAudit(client, { userId: req.user.id, action: "ticket.box_charges", entity: "ticket", entityId: ticketId,
+        details: { deducted, charges: boxCharges.map((c) => ({ id: c.id, action: c.action, amount: c.amount ?? null, miles: c.miles ?? null, reason: c.reason || null })) } });
+    }
+
     if (type === "sell" && contractId) {
       await client.query("UPDATE contracts SET shipped_qty = shipped_qty + $2 WHERE id = $1", [contractId, netWeightNum]);
     }
@@ -225,6 +238,7 @@ router.post("/", requireAuth, async (req, res) => {
   } catch (err) {
     await client.query("ROLLBACK");
     if (err.code === "23505") return res.status(409).json({ error: "A ticket with that id already exists" });
+    if (sendIfClientError(res, err)) return;
     throw err;
   } finally {
     client.release();
@@ -348,6 +362,7 @@ router.post("/:id/void", requireAuth, requirePermission("voidTickets"), async (r
       "UPDATE tickets SET status = 'Voided', voided_at = now(), voided_by = $2, void_reason = $3 WHERE id = $1 RETURNING *",
       [t.id, req.user.id, reason.trim()]
     );
+    await boxChargeSvc.releaseFromTicket(client, t.id); // its box rent / mileage go back to pending for the next ticket
     await logAudit(client, { userId: req.user.id, action: "ticket.void", entity: "ticket", entityId: t.id, details: { reason: reason.trim(), previousStatus: t.status } });
     await client.query("COMMIT");
     res.json(updated[0]);

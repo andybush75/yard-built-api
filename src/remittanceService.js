@@ -68,7 +68,9 @@ async function createRemittance(client, { payee, method, checkNumber, account, d
     }
   }
 
-  const total = Math.round((tickets.reduce((s, t) => s + parseFloat(t.total), 0) + freights.reduce((s, f) => s + parseFloat(f.cost), 0)) * 100) / 100;
+  // A ticket pays its material value less any box rent / mileage taken on it (tickets.deductions).
+  const payOf = (t) => Math.round((parseFloat(t.total) - parseFloat(t.deductions || 0)) * 100) / 100;
+  const total = Math.round((tickets.reduce((s, t) => s + payOf(t), 0) + freights.reduce((s, f) => s + parseFloat(f.cost), 0)) * 100) / 100;
   const { rows: remRows } = await client.query(
     `INSERT INTO remittances (payee, method, check_number, account, date, total, created_by)
      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
@@ -80,7 +82,7 @@ async function createRemittance(client, { payee, method, checkNumber, account, d
   for (const t of tickets) {
     const { rows: lineRows } = await client.query(
       "INSERT INTO remittance_lines (remittance_id, kind, ref_id, amount) VALUES ($1,'ticket',$2,$3) RETURNING *",
-      [remittance.id, t.id, t.total]
+      [remittance.id, t.id, payOf(t)]
     );
     lines.push(lineRows[0]);
     // Paying a Held ticket closes it in the same step (the cashier's "Pay" button).
@@ -92,7 +94,7 @@ async function createRemittance(client, { payee, method, checkNumber, account, d
     );
     await logAudit(client, {
       userId, action: "ticket.pay", entity: "ticket", entityId: t.id,
-      details: { remittanceId: remittance.id, method, checkNumber: finalCheckNumber, amount: parseFloat(t.total), payee: payee.trim(), source },
+      details: { remittanceId: remittance.id, method, checkNumber: finalCheckNumber, amount: payOf(t), payee: payee.trim(), source },
     });
   }
   for (const f of freights) {

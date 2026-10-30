@@ -153,6 +153,9 @@ router.post("/:id/start", requireAuth, async (req, res) => {
   if (job.status === "assigned" || job.status === "open") {
     await query("UPDATE box_jobs SET status='started', started_at=COALESCE(started_at, now()), driver_id=COALESCE(driver_id, $2), updated_at=now() WHERE id=$1", [job.id, req.user.id]);
   }
+  // The truck the driver is in — mileage for this job comes off that truck's odometer.
+  const truck = String((req.body || {}).truck || "").trim();
+  if (truck) await query("UPDATE box_jobs SET truck = $2 WHERE id = $1", [job.id, truck]);
   res.json(await one(job.id));
 });
 

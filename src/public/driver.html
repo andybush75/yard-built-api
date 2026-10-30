@@ -225,7 +225,12 @@ function renderJobs() {
 }
 function openJob(id) {
   const j = jobs.find((x) => x.id === id); if (!j) return;
-  if (j.status !== "started") { j.status = "started"; LS.set("jobs", jobs); api("/box-jobs/" + id + "/start", { method: "POST" }).catch(() => {}); }
+  const tEl = $("#truck"); if (tEl) LS.set("truck", tEl.value.trim());
+  if (!LS.get("truck", "") && ["swap", "pickup"].includes(j.task)) {
+    const t = prompt("Which truck are you in? (Truck #)"); if (t === null) return;
+    LS.set("truck", t.trim());
+  }
+  if (j.status !== "started") { j.status = "started"; LS.set("jobs", jobs); api("/box-jobs/" + id + "/start", { method: "POST", body: JSON.stringify({ truck: LS.get("truck", "") }) }).catch(() => {}); }
   if (["swap", "drop", "pickup"].includes(j.task)) {
     start(j.task);
     Object.assign(form, { jobId: j.id, job: j, customerName: j.customer_name || "", site: j.site || "", vendorId: j.vendor_id || null,

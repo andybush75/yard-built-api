@@ -4,6 +4,7 @@ const express = require("express");
 const { pool, query } = require("../db");
 const { requireAuth, requirePermission, userCan } = require("../middleware/auth");
 const { logAudit } = require("../audit");
+const charges = require("../boxCharges");
 
 const router = express.Router();
 const KINDS = ["Roll-off", "Lugger", "Hopper", "Tote", "Tire box", "Other"];
@@ -328,6 +329,14 @@ router.post("/moves", requireAuth, async (req, res) => {
         [boxOut.id, yard, occurredAt, moveId, !!r, r]
       );
     } else if (boxOut) warnings.push(`Box ${boxOut.number} already has a newer move on it — this one was logged but didn't change where it shows.`);
+    // Box rent for the stay that just ended, and mileage for the trip — both wait as pending charges
+    // for this customer and come off their next buy ticket (the scale operator can change or waive them).
+    if (boxOut && !stale(boxOut) && ["pickup", "swap"].includes(b.action)) {
+      await charges.rentOnPickup(client, { prev: prevOut, box: boxOut, moveId, occurredAt, yard });
+    }
+    if (job && ["pickup", "swap"].includes(b.action)) {
+      await charges.mileageForJob(client, { job, moveId, truck: b.truck, yard, customerName: customer || job.customer_name, vendorId: b.vendorId || job.vendor_id });
+    }
     if (warnings.length) await client.query("UPDATE box_moves SET warnings = $2 WHERE id = $1", [moveId, warnings]);
     await logAudit(client, { userId: req.user.id, action: `box.${b.action}`, entity: "box_move", entityId: moveId, details: { in: b.boxIn, out: b.boxOut, customer } });
     await client.query("COMMIT");
@@ -371,6 +380,10 @@ router.post("/moves/:id/void", requireAuth, requirePermission("manageBoxes"), as
       }
     }
     await client.query("UPDATE box_moves SET voided_at = now(), voided_by = $2, void_reason = $3 WHERE id = $1", [m.id, req.user.id, (req.body || {}).reason || null]);
+    // Charges this move created go away with it — unless one is already on a ticket.
+    const { rows: onTicket } = await client.query("SELECT kind, ticket_id FROM box_charges WHERE move_id = $1 AND status = 'applied'", [m.id]);
+    onTicket.forEach((c) => notes.push(`The ${c.kind} charge from this move is already on ticket ${c.ticket_id} — void that ticket or adjust it by hand.`));
+    await client.query("UPDATE box_charges SET status = 'void', updated_at = now() WHERE move_id = $1 AND status IN ('pending','waived')", [m.id]);
     if (m.job_id) {
       const { rows: jr } = await client.query(
         `UPDATE box_jobs SET status = CASE WHEN driver_id IS NULL THEN 'open' ELSE 'assigned' END, completed_at=NULL, completed_by=NULL, move_id=NULL, updated_at=now()
