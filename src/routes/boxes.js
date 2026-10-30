@@ -171,7 +171,8 @@ router.post("/import", requireAuth, requirePermission("manageBoxes"), async (req
 
 const MOVE_COLS = `m.id, m.created_at, m.occurred_at, m.action, m.yard, m.customer_name, m.site, m.box_in_id, m.box_out_id,
   m.box_in_number, m.box_out_number, m.new_status, m.truck, m.driver_name, m.lat, m.lng, m.accuracy_m, m.notes, m.source,
-  m.warnings, m.voided_at, m.void_reason, (m.photo IS NOT NULL) AS has_photo,
+  m.warnings, m.voided_at, m.void_reason, (m.photo IS NOT NULL) AS has_photo, m.job_id,
+  (SELECT 'J-' || job_no FROM box_jobs WHERE id = m.job_id) AS job_label,
   bi.number AS box_in, bo.number AS box_out, u.name AS entered_by`;
 
 router.get("/moves", requireAuth, async (req, res) => {
@@ -236,6 +237,16 @@ router.post("/moves", requireAuth, async (req, res) => {
   const occurredAt = b.occurredAt && !isNaN(new Date(b.occurredAt)) ? new Date(b.occurredAt) : new Date();
   if (occurredAt > new Date(Date.now() + 10 * 60000)) return res.status(400).json({ error: "That time is in the future" });
 
+  // A move made from a job on the driver's board closes that job. Only the job's driver or a
+  // dispatcher can close it; if the office cancelled or finished it meanwhile (phone was offline),
+  // the box move still counts — the box really moved — and the warning says so.
+  if (b.jobId) {
+    const { rows: jr } = await query("SELECT driver_id FROM box_jobs WHERE id = $1", [String(b.jobId)]);
+    if (!jr.length) return res.status(400).json({ error: "That job doesn't exist" });
+    if (jr[0].driver_id && jr[0].driver_id !== req.user.id && !userCan(req.user, "dispatchBoxes") && !userCan(req.user, "manageBoxes"))
+      return res.status(403).json({ error: "This job isn't on your board" });
+  }
+
   if (b.clientId) {
     const { rows: dup } = await query("SELECT id, warnings FROM box_moves WHERE client_id = $1", [String(b.clientId)]);
     if (dup.length) return res.json({ id: dup[0].id, duplicate: true, warnings: dup[0].warnings || [] });
@@ -253,6 +264,13 @@ router.post("/moves", requireAuth, async (req, res) => {
     const prevIn = snap(boxIn), prevOut = snap(boxOut);
     const customer = String(b.customerName || "").trim() || null;
     const flags = { in: [], out: [] };
+    let job = null;
+    if (b.jobId) {
+      const { rows: jr } = await client.query("SELECT * FROM box_jobs WHERE id = $1 FOR UPDATE", [String(b.jobId)]);
+      job = jr[0];
+      if (job.status === "cancelled") { warnings.push(`Job J-${job.job_no} had been cancelled by the office — the box move was still recorded.`); job = null; }
+      else if (job.status === "done") { warnings.push(`Job J-${job.job_no} was already finished — this was recorded as a separate move.`); job = null; }
+    }
 
     // Sanity checks: these are the discrepancies the paper count is looking for.
     if (boxIn && ["drop", "swap"].includes(b.action)) {
@@ -278,6 +296,13 @@ router.post("/moves", requireAuth, async (req, res) => {
        prevOut ? JSON.stringify(prevOut) : null, b.clientId ? String(b.clientId) : null, warnings]
     );
     moveId = mv[0].id;
+    if (job) {
+      await client.query("UPDATE box_moves SET job_id = $2 WHERE id = $1", [moveId, job.id]);
+      await client.query(
+        `UPDATE box_jobs SET status='done', completed_at=$2, completed_by=$3, move_id=$4, driver_id=COALESCE(driver_id,$3),
+           started_at=COALESCE(started_at,$2), driver_notes=COALESCE($5, driver_notes), updated_at=now() WHERE id=$1`,
+        [job.id, occurredAt, req.user.id, moveId, b.notes || null]);
+    }
 
     const review = (list) => (list.length ? list.join(" ") : null);
     if (boxIn && !stale(boxIn)) {
@@ -346,6 +371,12 @@ router.post("/moves/:id/void", requireAuth, requirePermission("manageBoxes"), as
       }
     }
     await client.query("UPDATE box_moves SET voided_at = now(), voided_by = $2, void_reason = $3 WHERE id = $1", [m.id, req.user.id, (req.body || {}).reason || null]);
+    if (m.job_id) {
+      const { rows: jr } = await client.query(
+        `UPDATE box_jobs SET status = CASE WHEN driver_id IS NULL THEN 'open' ELSE 'assigned' END, completed_at=NULL, completed_by=NULL, move_id=NULL, updated_at=now()
+         WHERE id = $1 AND move_id = $2 RETURNING job_no`, [m.job_id, m.id]);
+      if (jr.length) notes.push(`Job J-${jr[0].job_no} is back on the board.`);
+    }
     await logAudit(client, { userId: req.user.id, action: "box.void", entity: "box_move", entityId: m.id, details: { reason: (req.body || {}).reason } });
     await client.query("COMMIT");
   } catch (e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }

@@ -20,10 +20,10 @@ const BANK_ACCOUNTS = [
 ];
 
 const ROLES = [
-  { name: "Admin", system: true, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","adjustInventory","regradeInventory","packInventory","addCommodity","payRemittances","editBankAccounts","manageBoxes"] },
-  { name: "Yard Manager", system: false, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","regradeInventory","packInventory","payRemittances","manageBoxes"] },
-  { name: "Cashier", system: false, permissions: ["voidTickets","payRemittances"] },
-  { name: "Scale Operator", system: false, permissions: ["packInventory"] },
+  { name: "Admin", system: true, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","adjustInventory","regradeInventory","packInventory","addCommodity","payRemittances","editBankAccounts","manageBoxes","dispatchBoxes"] },
+  { name: "Yard Manager", system: false, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","regradeInventory","packInventory","payRemittances","manageBoxes","dispatchBoxes"] },
+  { name: "Cashier", system: false, permissions: ["voidTickets","payRemittances","dispatchBoxes"] },
+  { name: "Scale Operator", system: false, permissions: ["packInventory","dispatchBoxes"] },
   { name: "Mechanic", system: false, permissions: [] },
   { name: "Driver", system: false, permissions: [] },
 ];

@@ -54,6 +54,7 @@ app.use("/freight", require("./routes/freight"));
 app.use("/lanes", require("./routes/lanes"));
 app.use("/trailers", require("./routes/trailers"));
 app.use("/boxes", require("./routes/boxes"));                               // Box Dispatch: box list + driver drop/pick-up/swap log
+app.use("/box-jobs", require("./routes/boxJobs"));                         // Box jobs: call-in requests on the drivers' boards
 app.use("/settings", require("./routes/settings"));
 app.use("/assistant", require("./routes/assistant"));
 app.use("/imports", require("./routes/imports"));

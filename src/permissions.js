@@ -15,6 +15,7 @@ const PERMISSION_KEYS = [
   "viewIds",
   "manageDocuments",
   "manageBoxes",
+  "dispatchBoxes",
 ];
 
 function unknownKeys(list) {

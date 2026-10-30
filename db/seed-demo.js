@@ -36,10 +36,10 @@ const BANK_ACCOUNTS = [
 ];
 
 const ROLES = [
-  { name: "Admin", system: true, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","adjustInventory","regradeInventory","packInventory","addCommodity","payRemittances","editBankAccounts","viewIds","manageDocuments","manageBoxes"] },
-  { name: "Yard Manager", system: false, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","regradeInventory","packInventory","payRemittances","viewIds","manageDocuments","manageBoxes"] },
-  { name: "Cashier", system: false, permissions: ["voidTickets","payRemittances"] },
-  { name: "Scale Operator", system: false, permissions: ["packInventory"] },
+  { name: "Admin", system: true, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","adjustInventory","regradeInventory","packInventory","addCommodity","payRemittances","editBankAccounts","viewIds","manageDocuments","manageBoxes","dispatchBoxes"] },
+  { name: "Yard Manager", system: false, permissions: ["buttonMaker","voidTickets","editPricing","manageUsers","assignWorkOrderItems","regradeInventory","packInventory","payRemittances","viewIds","manageDocuments","manageBoxes","dispatchBoxes"] },
+  { name: "Cashier", system: false, permissions: ["voidTickets","payRemittances","dispatchBoxes"] },
+  { name: "Scale Operator", system: false, permissions: ["packInventory","dispatchBoxes"] },
   { name: "Mechanic", system: false, permissions: [] },
   { name: "Driver", system: false, permissions: [] },
 ];
@@ -50,7 +50,63 @@ const USERS = [
   { id: "demo-manager", name: "Jordan Reyes", email: "manager@yardbuilt.net", role: "Yard Manager",   title: "Yard Manager",   homeYard: "HAYS",  yards: ["HAYS", "COLBY"] },
   { id: "demo-cashier", name: "Casey Nguyen", email: "cashier@yardbuilt.net", role: "Cashier",        title: "Cashier",        homeYard: "SB",    yards: ["SB"] },
   { id: "demo-scale",   name: "Sam Okafor",   email: "scale@yardbuilt.net",   role: "Scale Operator", title: "Scale Operator", homeYard: "RC",    yards: ["RC"] },
+  { id: "demo-driver",  name: "Terry Beck",   email: "driver@yardbuilt.net",  role: "Driver",         title: "Roll-off Driver", homeYard: "SB",   yards: ["SB"] },
+  { id: "demo-driver2", name: "Rosa Ortiz",   email: "driver2@yardbuilt.net", role: "Driver",         title: "Roll-off Driver", homeYard: "SB",   yards: ["SB"] },
 ];
+
+// Box Dispatch demo: a handful of boxes out at customers or in the yard, and a few call-in jobs on the
+// drivers' boards. Loaded with the rest of the demo, and also into an already-seeded sandbox the first
+// time it starts with no boxes (so existing sandboxes pick it up without a reset).
+const DEMO_BOXES = [
+  { number: "30-11", kind: "Roll-off", size: "30 yd", status: "customer", customer: "Platte Valley Diesel", site: "1400 E 20th St", daysAgo: 23 },
+  { number: "30-14", kind: "Roll-off", size: "30 yd", status: "customer", customer: "Hansen Ranch", site: "County Rd 24", daysAgo: 9 },
+  { number: "20-03", kind: "Roll-off", size: "20 yd", status: "customer", customer: "Bluff Body Shop", site: "Broadway shop", daysAgo: 4 },
+  { number: "M-97",  kind: "Lugger",   size: null,    status: "customer", customer: "Gering Auto Salvage", site: "Back lot", daysAgo: 31 },
+  { number: "30-17", kind: "Roll-off", size: "30 yd", status: "yard" },
+  { number: "30-20", kind: "Roll-off", size: "30 yd", status: "yard" },
+  { number: "20-05", kind: "Roll-off", size: "20 yd", status: "yard" },
+  { number: "M-101", kind: "Lugger",   size: null,    status: "yard" },
+];
+const DEMO_JOBS = [
+  { task: "swap", customer: "Platte Valley Diesel", site: "1400 E 20th St", contact: "Dale", phone: "308-555-0142", kind: "Roll-off", size: "30 yd", box: "30-11", driver: "demo-driver", priority: "urgent", notes: "Box is full — gate code 4512" },
+  { task: "pickup", customer: "Hansen Ranch", site: "County Rd 24", contact: "Linda", phone: "308-555-0187", kind: "Roll-off", size: "30 yd", box: "30-14", driver: "demo-driver", notes: "Done with the cleanup, wants it gone" },
+  { task: "drop", customer: "Mitchell Fab & Welding", site: "Hwy 26 shop", contact: "Kyle", phone: "308-555-0119", kind: "Roll-off", size: "20 yd", driver: "demo-driver2", notes: "New customer — set it by the east door" },
+  { task: "swap", customer: "Gering Auto Salvage", site: "Back lot", contact: "Pat", phone: "308-555-0163", kind: "Lugger", box: "M-97", notes: "Call when 15 min out" },
+];
+async function loadBoxDemo(byUserId) {
+  const ids = {};
+  for (const b of DEMO_BOXES) {
+    const placed = b.daysAgo ? new Date(Date.now() - b.daysAgo * 86400000) : null;
+    const { rows } = await query(
+      `INSERT INTO boxes (number, kind, size, home_yard, status, current_yard, customer_name, site, placed_at, last_moved_at, verified_at, verified_by)
+       VALUES ($1,$2,$3,'SB',$4,'SB',$5,$6,$7,$7,now(),$8) ON CONFLICT (number) DO NOTHING RETURNING id`,
+      [b.number, b.kind, b.size, b.status, b.customer || null, b.site || null, placed, byUserId]);
+    if (rows.length) ids[b.number] = rows[0].id;
+  }
+  let order = 1;
+  for (const j of DEMO_JOBS) {
+    await query(
+      `INSERT INTO box_jobs (created_by, yard, task, customer_name, site, contact_name, contact_phone, box_kind, box_size, box_number, priority, driver_id, board_order, status, office_notes)
+       VALUES ($1,'SB',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [byUserId, j.task, j.customer, j.site, j.contact, j.phone, j.kind, j.size || null, j.box || null, j.priority || "normal",
+       j.driver || null, order++, j.driver ? "assigned" : "open", j.notes]);
+  }
+}
+async function ensureBoxDemo() {
+  const { rows } = await query("SELECT (SELECT COUNT(*) FROM boxes) AS b, (SELECT COUNT(*) FROM box_jobs) AS j");
+  if (+rows[0].b > 0 || +rows[0].j > 0) return;
+  const { rows: roles } = await query("SELECT id FROM roles WHERE name = 'Driver'");
+  if (!roles.length) return;
+  const hash = await bcrypt.hash(DEMO_LOGIN.password, 10);
+  for (const u of USERS.filter((x) => x.role === "Driver")) {
+    await query(
+      `INSERT INTO users (id, name, email, password_hash, role_id, title, home_yard, yards, must_change_password, active)
+       VALUES ($8,$1,$2,$3,$4,$5,$6,$7,false,true) ON CONFLICT DO NOTHING`,
+      [u.name, u.email, hash, roles[0].id, u.title, u.homeYard, u.yards, u.id]);
+  }
+  const { rows: admin } = await query("SELECT id FROM users WHERE email = $1", [DEMO_LOGIN.email]);
+  await loadBoxDemo(admin.length ? admin[0].id : null);
+}
 
 // master_price is stored per lb regardless of unit (the UI converts ferrous to $/net ton).
 const COMMODITIES = [
@@ -408,11 +464,13 @@ async function load() {
   );
 }
 
+const DEMO_ADMIN_ID = "demo-admin";
 // reset=true wipes first (SANDBOX=1 only). Without reset, loads only when the marker is absent.
 async function seedDemo({ reset = false } = {}) {
   if (reset) await wipe();
-  else if (await isSeeded()) return { skipped: true };
+  else if (await isSeeded()) { await ensureBoxDemo(); return { skipped: true }; }
   await load();
+  await loadBoxDemo(DEMO_ADMIN_ID);
   return { skipped: false, login: DEMO_LOGIN };
 }
 

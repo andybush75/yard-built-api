@@ -57,6 +57,13 @@
   .photo-prev { margin-top: 8px; max-width: 100%; border-radius: 10px; display:block; }
   .back { background:none; color: var(--muted); font-size: 16px; padding: 4px 0; margin-bottom: 6px; }
   .err { color: var(--bad); font-weight: 700; margin-top: 10px; }
+  .job { border: 2px solid var(--line); border-radius: 12px; padding: 14px; margin-top: 10px; background: var(--card); }
+  .job.urgent { border-color: var(--bad); } .job.started { border-color: var(--orange); }
+  .job .jt { font-size: 19px; font-weight: 800; } .job .js { color: var(--muted); font-size: 15px; margin-top: 2px; }
+  .job .jn { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); font-size: 15px; }
+  .job .btn { margin-top: 10px; padding: 14px; font-size: 18px; }
+  .job a.call { color: var(--orange); font-weight: 700; text-decoration: none; }
+  .tag.u { background: var(--bad-bg); color: var(--bad); } .tag.ok { background: var(--good-bg); color: var(--good); }
   .banner { background: var(--warn-bg); color: var(--warn); padding: 10px 16px; font-weight: 700; font-size: 15px; text-align:center; }
 </style>
 </head>
@@ -73,7 +80,9 @@ const YARDS = [["SB", "Scottsbluff"], ["HAYS", "Hays"], ["COLBY", "Colby"], ["RC
 const LS = { get: (k, d) => { try { const v = localStorage.getItem("ybd_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
              set: (k, v) => { try { localStorage.setItem("ybd_" + k, JSON.stringify(v)); } catch {} } };
 let token = LS.get("token", null), me = LS.get("me", null);
-let boxes = LS.get("boxes", []), screen = "home", form = {}, lastResult = null, recent = [], gps = null, busy = false, errMsg = "";
+let jobs = LS.get("jobs", []);
+let boxes = LS.get("boxes", []), screen = "home", lastResult = null, recent = [], gps = null, busy = false, errMsg = "";
+var form = {};   // var (not let) so inline handlers can reach it as window.form — a bare "form" inside onclick/oninput means the input's own <form>, which is null here
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const boxKey = (s) => (String(s || "").toUpperCase().match(/[A-Z]+|\d+/g) || []).map((t) => (/^\d+$/.test(t) ? String(parseInt(t, 10)) : t)).join("-");
@@ -94,7 +103,8 @@ async function flushQueue() {
   let q = queue(), changed = false;
   for (const item of [...q]) {
     try {
-      const r = await api("/boxes/moves", { method: "POST", body: JSON.stringify(item) });
+      const { path, ...body } = item;
+      const r = await api(path || "/boxes/moves", { method: "POST", body: JSON.stringify(body) });
       q = q.filter((x) => x.clientId !== item.clientId); changed = true;
       if (r.warnings && r.warnings.length) LS.set("lastQueuedWarnings", r.warnings);
     } catch (e) {
@@ -106,10 +116,12 @@ async function flushQueue() {
   renderBanner();
 }
 setInterval(flushQueue, 30000);
+setInterval(() => { if (screen === "home") refreshData(); }, 60000);   // new jobs from the office show up on their own
 window.addEventListener("online", flushQueue);
 
 async function refreshData() {
   if (!token) return;
+  try { jobs = await api("/box-jobs?scope=mine"); LS.set("jobs", jobs); } catch {}
   try { boxes = await api("/boxes"); LS.set("boxes", boxes.map(({ sd_snapshot, ...b }) => b)); } catch {}
   try { const since = new Date(); since.setHours(0, 0, 0, 0); recent = await api("/boxes/moves?mine=1&limit=30&since=" + since.toISOString()); } catch {}
   if (screen === "home") render();
@@ -132,7 +144,7 @@ function render() {
   $("#who").innerHTML = token && me ? `${esc(me.name)}<br><a href="#" onclick="signOut();return false;">Sign out</a>` : "";
   if (!token) return renderLogin();
   if (me && me.mustChangePassword) return renderChangePw();
-  ({ home: renderHome, form: renderForm, done: renderDone })[screen]();
+  ({ home: renderHome, form: renderForm, done: renderDone, jobdone: renderJobDone })[screen]();
 }
 
 function renderLogin() {
@@ -177,6 +189,8 @@ function renderHome() {
         <div><label>Truck #</label><input id="truck" value="${esc(truck)}" inputmode="numeric" placeholder="e.g. 206" onchange="LS.set('truck', this.value.trim())" /></div>
       </div>
     </div>
+    ${renderJobs()}
+    <h2 style="margin:18px 2px 10px;">Not on your board?</h2>
     <div class="actions">
       <button class="act" onclick="start('swap')"><div class="ic">⇄</div><div><b>Swap</b><span>Drop an empty, pick up the full one</span></div></button>
       <button class="act" onclick="start('drop')"><div class="ic">↓</div><div><b>Drop off</b><span>Leave a box at a customer</span></div></button>
@@ -192,7 +206,62 @@ function renderHome() {
       <div class="t">${actLabel(m.action)} · ${esc([m.box_in || m.box_in_number, m.box_out || m.box_out_number].filter(Boolean).join(" ⇄ "))}${m.voided_at ? '<span class="tag q">Voided by office</span>' : (m.warnings && m.warnings.length ? '<span class="tag">Office will check</span>' : "")}</div>
       <div class="s">${esc(m.customer_name || yardName(m.yard))} · ${new Date(m.occurred_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div></div>`).join("") : `<div class="muted">Nothing yet today.</div>`}</div></div>`;
 }
-const actLabel = (a) => ({ swap: "Swap", drop: "Drop", pickup: "Pick up", yard_move: "At yard", status: "Reported", correction: "Correction" }[a] || a);
+const TASK_LABEL = { swap: "Swap", drop: "Drop off", pickup: "Pick up", dump_return: "Dump & return", other: "Other" };
+function renderJobs() {
+  const queuedJobIds = new Set(queue().map((x) => x.jobId || (x.path && x.path.split("/")[2])).filter(Boolean));
+  const open = jobs.filter((j) => (j.status === "assigned" || j.status === "started") && !queuedJobIds.has(j.id));
+  const done = jobs.filter((j) => j.status === "done" || queuedJobIds.has(j.id));
+  return `<div class="card"><h2>My jobs ${open.length ? `(${open.length})` : ""}</h2>
+    ${open.length ? open.map((j, i) => `<div class="job ${j.priority === "urgent" ? "urgent" : ""} ${j.status === "started" ? "started" : ""}">
+      <div class="jt">${i + 1}. ${esc(TASK_LABEL[j.task] || j.task)} — ${esc(j.customer_name)}${j.priority === "urgent" ? '<span class="tag u">URGENT</span>' : ""}${j.status === "started" ? '<span class="tag">Started</span>' : ""}</div>
+      <div class="js">${esc([j.site, [j.box_size, j.box_kind].filter(Boolean).join(" "), j.box_number ? "Box " + j.box_number : ""].filter(Boolean).join(" · "))}</div>
+      ${j.contact_name || j.contact_phone ? `<div class="js">${esc(j.contact_name || "")} ${j.contact_phone ? `<a class="call" href="tel:${esc(j.contact_phone.replace(/[^0-9+]/g, ""))}">📞 ${esc(j.contact_phone)}</a>` : ""}</div>` : ""}
+      ${j.requested_for ? `<div class="js">Wanted: ${esc(new Date(j.requested_for).toLocaleDateString(undefined, { timeZone: "UTC", weekday: "short", month: "numeric", day: "numeric" }))}</div>` : ""}
+      ${j.office_notes ? `<div class="jn">${esc(j.office_notes)}</div>` : ""}
+      <button class="btn" onclick="openJob('${j.id}')">${j.status === "started" ? "Finish this job" : "Start"} — ${esc(j.job_label)}</button>
+    </div>`).join("") : `<div class="muted">Nothing on your board right now. New jobs from the office show up here.</div>`}
+    ${done.length ? `<div class="muted" style="margin-top:12px;">Done today: ${done.map((j) => esc(j.job_label + " " + j.customer_name)).join(" · ")}</div>` : ""}
+  </div>`;
+}
+function openJob(id) {
+  const j = jobs.find((x) => x.id === id); if (!j) return;
+  if (j.status !== "started") { j.status = "started"; LS.set("jobs", jobs); api("/box-jobs/" + id + "/start", { method: "POST" }).catch(() => {}); }
+  if (["swap", "drop", "pickup"].includes(j.task)) {
+    start(j.task);
+    Object.assign(form, { jobId: j.id, job: j, customerName: j.customer_name || "", site: j.site || "", vendorId: j.vendor_id || null,
+      boxOut: ["swap", "pickup"].includes(j.task) ? (j.box_number || "") : "", boxIn: j.task === "drop" ? (j.box_number || "") : "" });
+    render();
+  } else {
+    form = { jobId: j.id, job: j, notes: "" }; errMsg = ""; screen = "jobdone"; render(); window.scrollTo(0, 0);
+  }
+}
+function renderJobDone() {
+  const j = form.job;
+  $("#app").innerHTML = `<button class="back" onclick="screen='home'; render();">‹ Back</button>
+    <div class="card"><h1>${esc(TASK_LABEL[j.task])} — ${esc(j.customer_name)}</h1>
+      <div class="muted">${esc(j.job_label)}${j.site ? " · " + esc(j.site) : ""}${j.box_number ? " · Box " + esc(j.box_number) : ""}</div>
+      ${j.office_notes ? `<div class="hint warn">${esc(j.office_notes)}</div>` : ""}
+      <p class="muted">${j.task === "dump_return" ? "The box goes back to the same spot, so nothing moves on the box list." : "Tell the office what you did."}</p>
+      <label>Notes <small>(optional)</small></label><textarea id="jnotes" rows="3" oninput="window.form.notes=this.value">${esc(form.notes)}</textarea>
+      <div class="err">${esc(errMsg)}</div><div style="height:14px"></div>
+      <button class="btn" onclick="finishJob()" ${busy ? "disabled" : ""}>${busy ? "Sending…" : "Mark done"}</button>
+      <div style="height:10px"></div>
+      <button class="btn ghost" onclick="switchToMove()">A box actually moved — record a swap / drop / pick-up instead</button>
+    </div>`;
+}
+function switchToMove() { const j = form.job; screen = "home"; start("swap"); Object.assign(form, { jobId: j.id, job: j, customerName: j.customer_name || "", site: j.site || "", vendorId: j.vendor_id || null, boxOut: j.box_number || "" }); render(); }
+async function finishJob() {
+  const j = form.job, body = { notes: form.notes.trim() || null, occurredAt: new Date().toISOString() };
+  busy = true; errMsg = ""; render();
+  try { await api("/box-jobs/" + j.id + "/complete", { method: "POST", body: JSON.stringify(body) }); lastResult = { ok: true, warnings: [], payload: { action: j.task, customerName: j.customer_name, job: j } }; }
+  catch (e) {
+    if (e.status && e.status !== 401) { busy = false; errMsg = e.message; return render(); }
+    LS.set("queue", [...queue(), { ...body, path: "/box-jobs/" + j.id + "/complete", clientId: "job-" + j.id, action: j.task, customerName: j.customer_name, jobId: j.id }]);
+    lastResult = { ok: true, queued: true, warnings: [], payload: { action: j.task, customerName: j.customer_name, job: j } };
+  }
+  busy = false; screen = "done"; render(); refreshData();
+}
+const actLabel = (a) => ({ swap: "Swap", drop: "Drop", pickup: "Pick up", yard_move: "At yard", status: "Reported", correction: "Correction", dump_return: "Dump & return", other: "Job" }[a] || a);
 function dropQueued(id) { if (!confirm("Delete this entry from the phone? Tell the office what happened instead.")) return; LS.set("queue", queue().filter((x) => x.clientId !== id)); render(); }
 
 function start(action) {
@@ -229,18 +298,19 @@ function renderForm() {
   $("#app").innerHTML = `
     <button class="back" onclick="screen='home'; render();">‹ Back</button>
     <div class="card"><h1>${title}</h1>
-      ${needCust ? `<label>Customer</label><input id="cust" value="${esc(form.customerName)}" placeholder="Start typing…" autocomplete="off" oninput="form.customerName=this.value; form.vendorId=null; custSearch(this.value);" />
+      ${form.job ? `<div class="muted" style="margin-top:-6px;">Job ${esc(form.job.job_label)}${form.job.box_size || form.job.box_kind ? " · " + esc([form.job.box_size, form.job.box_kind].filter(Boolean).join(" ")) : ""}</div>${form.job.office_notes ? `<div class="hint warn">${esc(form.job.office_notes)}</div>` : ""}` : ""}
+      ${needCust ? `<label>Customer</label><input id="cust" value="${esc(form.customerName)}" placeholder="Start typing…" autocomplete="off" oninput="window.form.customerName=this.value; window.form.vendorId=null; custSearch(this.value);" />
         <div id="sugg"></div>
         ${atCust.length ? `<div class="muted" style="margin-top:8px;">Boxes showing here now — tap to pick up:</div><div class="chips">${atCust.map((b) => `<button class="chip ${boxKey(form.boxOut) === boxKey(b.number) ? "on" : ""}" onclick="pickOut('${esc(b.number)}')">${esc(b.number)}</button>`).join("")}</div>` : ""}
-        <label>Site / address <small>(optional)</small></label><input id="site" value="${esc(form.site)}" placeholder="e.g. Jackson Blvd shop" oninput="form.site=this.value" />` : ""}
-      ${needOut ? `<label>Box picked up ${a === "swap" ? "<small>(the full one)</small>" : ""}</label><input class="big" id="bout" value="${esc(form.boxOut)}" autocomplete="off" autocapitalize="characters" placeholder="e.g. 30-11" oninput="form.boxOut=this.value; $('#hout').innerHTML=boxHint(this.value,'out');" /><div id="hout">${boxHint(form.boxOut, "out")}</div>` : ""}
-      ${needIn ? `<label>${a === "swap" ? "Box dropped <small>(the empty one)</small>" : "Box #"}</label><input class="big" id="bin" value="${esc(form.boxIn)}" autocomplete="off" autocapitalize="characters" placeholder="e.g. M97" oninput="form.boxIn=this.value; $('#hin').innerHTML=boxHint(this.value,'in');" /><div id="hin">${boxHint(form.boxIn, "in")}</div>` : ""}
-      ${a === "status" ? `<label>What's wrong?</label><div class="chips">${[["repair", "Damaged — needs repair"], ["missing", "Can't find it"]].map(([v, l]) => `<button class="chip ${form.newStatus === v ? "on" : ""}" onclick="form.newStatus='${v}'; render();">${l}</button>`).join("")}</div>` : ""}
+        <label>Site / address <small>(optional)</small></label><input id="site" value="${esc(form.site)}" placeholder="e.g. Jackson Blvd shop" oninput="window.form.site=this.value" />` : ""}
+      ${needOut ? `<label>Box picked up ${a === "swap" ? "<small>(the full one)</small>" : ""}</label><input class="big" id="bout" value="${esc(form.boxOut)}" autocomplete="off" autocapitalize="characters" placeholder="e.g. 30-11" oninput="window.form.boxOut=this.value; $('#hout').innerHTML=boxHint(this.value,'out');" /><div id="hout">${boxHint(form.boxOut, "out")}</div>` : ""}
+      ${needIn ? `<label>${a === "swap" ? "Box dropped <small>(the empty one)</small>" : "Box #"}</label><input class="big" id="bin" value="${esc(form.boxIn)}" autocomplete="off" autocapitalize="characters" placeholder="e.g. M97" oninput="window.form.boxIn=this.value; $('#hin').innerHTML=boxHint(this.value,'in');" /><div id="hin">${boxHint(form.boxIn, "in")}</div>` : ""}
+      ${a === "status" ? `<label>What's wrong?</label><div class="chips">${[["repair", "Damaged — needs repair"], ["missing", "Can't find it"]].map(([v, l]) => `<button class="chip ${form.newStatus === v ? "on" : ""}" onclick="window.form.newStatus='${v}'; render();">${l}</button>`).join("")}</div>` : ""}
       ${a === "yard_move" ? `<p class="muted" style="margin-top:10px;">Marks the box as sitting at the <b>${esc(yardName(LS.get("yard", "SB")))}</b> yard (change the yard on the first screen).</p>` : ""}
       <label>Photo <small>(optional)</small></label>
       <input type="file" accept="image/*" capture="environment" onchange="takePhoto(this)" style="font-size:16px;padding:10px;" />
       ${form.photo ? `<img class="photo-prev" src="${form.photo}" alt="Photo" />` : ""}
-      <label>Notes <small>(optional)</small></label><textarea id="notes" rows="2" oninput="form.notes=this.value">${esc(form.notes)}</textarea>
+      <label>Notes <small>(optional)</small></label><textarea id="notes" rows="2" oninput="window.form.notes=this.value">${esc(form.notes)}</textarea>
       <div class="muted" id="gps" style="margin-top:10px;"></div>
       <div class="err">${esc(errMsg)}</div>
       <div style="height:14px"></div>
@@ -292,7 +362,7 @@ async function submitMove() {
     customerName: form.customerName.trim() || null, vendorId: form.vendorId, site: form.site.trim() || null,
     boxIn: form.boxIn.trim().toUpperCase() || null, boxOut: form.boxOut.trim().toUpperCase() || null,
     newStatus: a === "status" ? form.newStatus : undefined, notes: form.notes.trim() || null, photo: form.photo,
-    occurredAt: new Date().toISOString(), ...(gps || {}),
+    occurredAt: new Date().toISOString(), ...(gps || {}), ...(form.jobId ? { jobId: form.jobId } : {}),
   };
   busy = true; render();
   try {
@@ -310,7 +380,8 @@ function renderDone() {
   const r = lastResult, p = r.payload;
   $("#app").innerHTML = `<div class="card done"><div class="big">✓</div>
     <h1>${r.queued ? "Saved on your phone" : "Sent"}</h1>
-    <p>${actLabel(p.action)} · <b>${esc([p.boxIn, p.boxOut].filter(Boolean).join(" ⇄ "))}</b>${p.customerName ? " · " + esc(p.customerName) : ""}</p>
+    <p>${actLabel(p.action)}${p.boxIn || p.boxOut ? ` · <b>${esc([p.boxIn, p.boxOut].filter(Boolean).join(" ⇄ "))}</b>` : ""}${p.customerName ? " · " + esc(p.customerName) : ""}</p>
+    ${p.jobId || p.job ? `<p class="muted">Job ${esc((p.job && p.job.job_label) || (jobs.find((j) => j.id === p.jobId) || {}).job_label || "")} ${r.queued ? "will close when this sends" : "is done"}.</p>` : ""}
     ${r.queued ? `<p class="muted">No signal right now — it sends by itself when you're back in range.</p>` : ""}
     ${r.warnings.length ? `<div class="hint warn" style="text-align:left;">The office will double-check this:<br>${r.warnings.map(esc).join("<br>")}</div>` : ""}
     <div style="height:16px"></div><button class="btn" onclick="screen='home'; render();">Done</button></div>`;
