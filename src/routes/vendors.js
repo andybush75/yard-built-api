@@ -5,7 +5,7 @@ const { requireAuth, requirePermission } = require("../middleware/auth");
 const router = express.Router();
 
 // id_number_enc / dob_enc never leave the server through the list; the identity routes handle them.
-const VENDOR_COLS = "id, name, phone, email, tier, notes, smartphone, on_price_list, auto_send, last_sent, created_at, active, address, id_type, id_last4, id_state, id_expires, plate, plate_state, id_updated_at";
+const VENDOR_COLS = "id, name, phone, email, tier, notes, smartphone, on_price_list, auto_send, last_sent, created_at, active, address, id_type, id_last4, id_state, id_expires, plate, plate_state, id_updated_at, box_mileage_rate, box_rent_business";
 router.get("/", requireAuth, async (req, res) => {
   const { rows } = await query(`SELECT ${VENDOR_COLS} FROM vendors ORDER BY name`);
   res.json(rows);

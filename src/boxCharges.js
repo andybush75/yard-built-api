@@ -47,12 +47,24 @@ function rentAmount(placedAt, endAt, s) {
   return { days, billable, amount: r2((billable * s.weekly) / 7) };
 }
 
-function mileageAmount(miles, s) {
-  if (s.mileRate === null || miles === null || miles === undefined) return 0;
+// rate: the customer's own rate if they have one, else the company rate (s.mileRate).
+function mileageAmount(miles, s, rate) {
+  const r = rate === undefined ? s.mileRate : rate;
+  if (r === null || r === undefined || miles === null || miles === undefined) return 0;
   const m = Math.max(0, parseFloat(miles) - s.freeMiles);
-  if (m <= 0) return 0;
-  return r2(Math.max(m * s.mileRate, s.minimum));
+  if (m <= 0 || parseFloat(r) <= 0) return 0;
+  return r2(Math.max(m * parseFloat(r), s.minimum));
 }
+
+// The rate per mile for a customer: their own (set on the dealer) or the company rate. null = off.
+async function mileRateFor(client, vendorId, name, s) {
+  const { rows } = vendorId
+    ? await client.query("SELECT box_mileage_rate FROM vendors WHERE id = $1", [vendorId])
+    : name ? await client.query("SELECT box_mileage_rate FROM vendors WHERE lower(name) = lower($1) AND box_mileage_rate IS NOT NULL LIMIT 1", [name]) : { rows: [] };
+  if (rows.length && rows[0].box_mileage_rate !== null) return { rate: parseFloat(rows[0].box_mileage_rate), own: true };
+  return { rate: s.mileRate, own: false };
+}
+const chargeRate = (ch, s) => (ch.rate_per_mile !== null && ch.rate_per_mile !== undefined ? parseFloat(ch.rate_per_mile) : s.mileRate);
 
 // Called from POST /boxes/moves inside its transaction, for a box that was at a customer and just
 // left (pick-up, or the full box in a swap). `prev` is the box as it was before the move.
@@ -76,12 +88,13 @@ async function rentOnPickup(client, { prev, box, moveId, occurredAt, yard }) {
 // Called when a pick-up / swap job is finished by a box move: one mileage charge for that trip.
 async function mileageForJob(client, { job, moveId, truck, yard, customerName, vendorId }) {
   const s = await settings(client);
-  if (s.mileRate === null) return null;
+  const { rate } = await mileRateFor(client, vendorId, customerName, s);
+  if (rate === null || rate <= 0) return null;   // no company rate and none for this customer, or set to 0 = never charge
   const t = String(truck || job.truck || "").trim();
   const { rows } = await client.query(
     `INSERT INTO box_charges (kind, status, yard, customer_name, vendor_id, job_id, move_id, truck, trip_start, rate_per_mile, calc_amount, amount, notes)
      VALUES ('mileage','pending',$1,$2,$3,$4,$5,$6,$7,$8,0,0,$9) ON CONFLICT DO NOTHING RETURNING *`,
-    [yard, customerName, vendorId || null, job.id, moveId, t || null, job.started_at || null, s.mileRate,
+    [yard, customerName, vendorId || null, job.id, moveId, t || null, job.started_at || null, rate,
      !t ? "No truck # on this job — enter the miles by hand." : !job.started_at ? "The driver never pressed Start — enter the miles by hand." : null]);
   return rows[0] || null;
 }
@@ -101,11 +114,11 @@ async function estimateMileage(client, ch, endAt) {
   } else if (ch.truck && ch.trip_start && !motive.configured()) {
     note = "Motive isn't connected yet — enter the miles by hand.";
   }
-  const amount = mileageAmount(miles, s);
+  const amount = mileageAmount(miles, s, chargeRate(ch, s));
   const { rows } = await client.query(
-    `UPDATE box_charges SET miles=$2, miles_source=$3, odometer=$4, trip_end=$5, rate_per_mile=$6, calc_amount=$7, amount=$7, notes=$8, updated_at=now()
+    `UPDATE box_charges SET miles=$2, miles_source=$3, odometer=$4, trip_end=$5, calc_amount=$6, amount=$6, notes=$7, updated_at=now()
      WHERE id=$1 RETURNING *`,
-    [ch.id, miles, miles === null ? null : "motive", odo ? JSON.stringify(odo) : null, end, s.mileRate, amount, note]);
+    [ch.id, miles, miles === null ? null : "motive", odo ? JSON.stringify(odo) : null, end, amount, note]);
   return rows[0];
 }
 
@@ -146,7 +159,7 @@ async function applyToTicket(client, ticket, items, userId) {
     if (it.action !== "apply") continue;
     let miles = ch.miles, source = ch.miles_source, calc = parseFloat(ch.calc_amount);
     if (ch.kind === "mileage" && it.miles !== undefined && it.miles !== null && it.miles !== "" && parseFloat(it.miles) !== parseFloat(ch.miles)) {
-      miles = Math.max(0, Math.round(parseFloat(it.miles) * 10) / 10); source = "manual"; calc = mileageAmount(miles, s);
+      miles = Math.max(0, Math.round(parseFloat(it.miles) * 10) / 10); source = "manual"; calc = mileageAmount(miles, s, chargeRate(ch, s));
     }
     let amount = it.amount !== undefined && it.amount !== null && it.amount !== "" ? r2(parseFloat(it.amount)) : calc;
     if (isNaN(amount) || amount < 0) throw fail(400, "A box charge amount must be zero or more");
@@ -170,4 +183,4 @@ async function releaseFromTicket(client, ticketId) {
     `UPDATE box_charges SET status='pending', ticket_id=NULL, applied_at=NULL, applied_by=NULL, updated_at=now() WHERE ticket_id = $1 AND status = 'applied'`, [ticketId]);
 }
 
-module.exports = { settings, guessBusiness, isBusiness, rentAmount, mileageAmount, rentOnPickup, mileageForJob, estimateMileage, pendingFor, applyToTicket, releaseFromTicket };
+module.exports = { settings, guessBusiness, isBusiness, rentAmount, mileageAmount, mileRateFor, chargeRate, rentOnPickup, mileageForJob, estimateMileage, pendingFor, applyToTicket, releaseFromTicket };

@@ -65,7 +65,7 @@ router.patch("/:id", requireAuth, canCharge, async (req, res) => {
   const s = await withClient((c) => svc.settings(c));
   let miles = ch.miles, source = ch.miles_source, calc = parseFloat(ch.calc_amount), amount = parseFloat(ch.amount);
   if (ch.kind === "mileage" && b.miles !== undefined && b.miles !== "" && b.miles !== null) {
-    miles = Math.max(0, Math.round(parseFloat(b.miles) * 10) / 10); source = "manual"; calc = svc.mileageAmount(miles, s); amount = calc;
+    miles = Math.max(0, Math.round(parseFloat(b.miles) * 10) / 10); source = "manual"; calc = svc.mileageAmount(miles, s, svc.chargeRate(ch, s)); amount = calc;
   }
   if (b.amount !== undefined && b.amount !== "" && b.amount !== null) {
     amount = r2(parseFloat(b.amount));
@@ -103,17 +103,18 @@ router.post("/", requireAuth, canCharge, async (req, res) => {
   if (!["rent", "mileage"].includes(b.kind)) return res.status(400).json({ error: "kind must be rent or mileage" });
   if (!String(b.customerName || "").trim()) return res.status(400).json({ error: "Enter the customer" });
   const s = await withClient((c) => svc.settings(c));
-  let amount = b.amount !== undefined && b.amount !== "" && b.amount !== null ? r2(parseFloat(b.amount)) : null;
-  const miles = b.kind === "mileage" && b.miles !== undefined && b.miles !== "" ? Math.max(0, parseFloat(b.miles)) : null;
-  if (amount === null && miles !== null) amount = svc.mileageAmount(miles, s);
-  if (amount === null || isNaN(amount) || amount < 0) return res.status(400).json({ error: "Enter an amount" + (b.kind === "mileage" ? " or the miles" : "") });
   let vendorId = b.vendorId || null;
   if (!vendorId) { const { rows } = await query("SELECT id FROM vendors WHERE lower(name) = lower($1) LIMIT 1", [String(b.customerName).trim()]); vendorId = rows[0] ? rows[0].id : null; }
+  const { rate } = await withClient((c) => svc.mileRateFor(c, vendorId, String(b.customerName).trim(), s));
+  let amount = b.amount !== undefined && b.amount !== "" && b.amount !== null ? r2(parseFloat(b.amount)) : null;
+  const miles = b.kind === "mileage" && b.miles !== undefined && b.miles !== "" ? Math.max(0, parseFloat(b.miles)) : null;
+  if (amount === null && miles !== null) amount = svc.mileageAmount(miles, s, rate);
+  if (amount === null || isNaN(amount) || amount < 0) return res.status(400).json({ error: "Enter an amount" + (b.kind === "mileage" ? " or the miles" : "") });
   const { rows } = await query(
     `INSERT INTO box_charges (kind, status, yard, customer_name, vendor_id, box_number, truck, miles, miles_source, rate_per_mile, calc_amount, amount, notes)
      VALUES ($1,'pending',$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11) RETURNING id`,
     [b.kind, b.yard || req.user.home_yard || "SB", String(b.customerName).trim(), vendorId, b.boxNumber || null, b.truck || null,
-     miles, miles !== null ? "manual" : null, b.kind === "mileage" ? s.mileRate : null, amount, String(b.notes || "").trim() || "Added by hand"]);
+     miles, miles !== null ? "manual" : null, b.kind === "mileage" ? rate : null, amount, String(b.notes || "").trim() || "Added by hand"]);
   await logAudit({ query }, { userId: req.user.id, action: "boxcharge.create", entity: "box_charge", entityId: rows[0].id, details: b });
   res.status(201).json(await one(rows[0].id));
 });
@@ -139,6 +140,37 @@ router.post("/business", requireAuth, canCharge, async (req, res) => {
   }
   await logAudit({ query }, { userId: req.user.id, action: "vendor.box_rent_business", entity: "vendor", entityId: vendorId, details: { business: val, chargesChanged: changed } });
   res.json({ vendorId, business: val, chargesChanged: changed });
+});
+
+// A customer's own mileage rate (null = use the company rate, 0 = never charge them mileage).
+// Their pending mileage charges are re-figured at the new rate; charges already on tickets aren't touched.
+router.post("/customer-rate", requireAuth, async (req, res) => {
+  if (!userCan(req.user, "editPricing") && !userCan(req.user, "manageBoxes")) return res.status(403).json({ error: "Missing permission: editPricing" });
+  const { vendorId } = req.body || {};
+  const raw = (req.body || {}).rate;
+  const rate = raw === null || raw === undefined || raw === "" ? null : r2(parseFloat(raw));
+  if (!vendorId) return res.status(400).json({ error: "vendorId is required" });
+  if (rate !== null && (isNaN(rate) || rate < 0)) return res.status(400).json({ error: "Rate must be zero or more, or blank for the company rate" });
+  const { rows } = await query("UPDATE vendors SET box_mileage_rate = $2 WHERE id = $1 RETURNING id, name", [vendorId, rate]);
+  if (!rows.length) return res.status(404).json({ error: "Not found" });
+  const updated = await withClient(async (c) => {
+    const s = await svc.settings(c);
+    const effective = rate === null ? s.mileRate : rate;
+    const { rows: pend } = await c.query(
+      `SELECT * FROM box_charges WHERE kind = 'mileage' AND status = 'pending' AND (vendor_id = $1 OR lower(customer_name) = lower($2))`, [vendorId, rows[0].name]);
+    for (const ch of pend) {
+      const amt = svc.mileageAmount(ch.miles, s, effective);
+      await c.query("UPDATE box_charges SET rate_per_mile = $2, calc_amount = $3, amount = $3, updated_at = now() WHERE id = $1", [ch.id, effective, amt]);
+    }
+    return pend.length;
+  });
+  await logAudit({ query }, { userId: req.user.id, action: "vendor.box_mileage_rate", entity: "vendor", entityId: vendorId, details: { rate, pendingRefigured: updated } });
+  res.json({ vendorId, rate, pendingRefigured: updated });
+});
+
+router.get("/customer-rates", requireAuth, async (req, res) => {
+  const { rows } = await query("SELECT id, name, box_mileage_rate FROM vendors WHERE box_mileage_rate IS NOT NULL ORDER BY name");
+  res.json(rows);
 });
 
 // Is Motive connected, and which trucks does it see (to check the numbers match the drivers' Truck #).
